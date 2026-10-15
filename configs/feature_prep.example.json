@@ -5,5 +5,6 @@
   "duplicate_key": "sha256",
   "expected_file_type": "Win64",
   "include_partitions": ["train", "test"],
-  "drop_test_records_seen_in_train": true
+  "drop_test_records_seen_in_train": true,
+  "fit_end_week": "2024-06-23"
 }

@@ -1,0 +1,58 @@
+name: Optional AWS pipeline execution
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_failure:
+        description: Exercise deliberate RejectCandidate path with unchanged thresholds
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  pipeline:
+    # Configure this environment's variables and an account-specific OIDC trust.
+    # Manual invocation is the only trigger for these paid jobs.
+    environment: aws-lab
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AAI540_BUCKET: ${{ vars.AAI540_BUCKET }}
+      AAI540_EXECUTION_ROLE_ARN: ${{ vars.AAI540_EXECUTION_ROLE_ARN }}
+      AAI540_MEMBER: ${{ vars.AAI540_MEMBER }}
+      AAI540_HANDOFF_URI: ${{ vars.AAI540_HANDOFF_URI }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements-sagemaker.txt
+      - name: Run local checks before AWS access
+        run: |
+          python scripts/validate_notebooks.py
+          python -m unittest discover -s tests -v
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AAI540_GITHUB_OIDC_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: aai540-github
+      - name: Run the measured cloud pipeline
+        if: ${{ !inputs.force_failure }}
+        run: python scripts/run_sagemaker_pipeline.py --config configs/sagemaker.example.json --execute --download --wait
+      - name: Run and verify the intentional rejection branch
+        if: ${{ inputs.force_failure }}
+        run: python scripts/run_sagemaker_pipeline.py --config configs/sagemaker.example.json --execute --download --wait --force-failure --expect-failure
+      - name: Preserve actual run evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sagemaker-execution-${{ github.run_id }}
+          path: reports/model_training/
+          if-no-files-found: warn

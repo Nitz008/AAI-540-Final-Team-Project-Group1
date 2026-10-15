@@ -2,7 +2,28 @@
 
 AAI-540 MLOps Final Team Project - Group 1
 
-This repository contains the reproducible data-pipeline work for benign-versus-malicious static malware classification using the Win64 portion of EMBER2024. It includes raw-data validation, EDA, leakage-aware feature preparation, and chronological datasets for the model-training handoff. It does **not** train or deploy a model.
+This repository implements a reproducible ML system for benign-versus-malicious static malware classification using the Win64 portion of EMBER2024. The original validation, EDA, feature preparation, and chronological splits are extended on `marco-model-training-evaluation` with model comparison, validation-only threshold selection, test evaluation, and an account-portable AWS SageMaker workflow. Cloud components must be run in your account to produce deployment evidence; no measured model scores or successful AWS runs are claimed by the source code alone.
+
+## SageMaker quick start
+
+Start with [02_sagemaker_training_evaluation.ipynb](notebooks/02_sagemaker_training_evaluation.ipynb). It walks through configuration, S3 handoff validation, managed training and evaluation, a conditional model registry gate, Feature Store, batch inference, custom drift reports, CloudWatch dashboards, and cleanup. Paid AWS actions are disabled by default. Each teammate uses an existing bucket and execution role in their own account; credentials come from the normal AWS credential provider chain.
+
+```bash
+git clone --branch marco-model-training-evaluation https://github.com/dodo0-0/AAI-540-Final-Team-Project-Group1.git
+cd AAI-540-Final-Team-Project-Group1
+python -m pip install -r requirements-sagemaker.txt
+cp configs/sagemaker.example.json configs/sagemaker.local.json
+# Edit the local JSON for your region, bucket, execution role, member, and run ID.
+jupyter lab notebooks/02_sagemaker_training_evaluation.ipynb
+```
+
+In PowerShell, replace `cp` with `Copy-Item` if needed. Use the [SageMaker runbook](docs/sagemaker_runbook.md) for exact account setup, S3 paths, IAM requirements, instance quotas, and execution steps. Existing processed artifacts must be regenerated with this branch's train-window-only preprocessing before strict model training: the earlier schema fitted normalization on all 52 official training weeks, including the validation period. The notebook explains the explicit legacy reproduction option and its limitation.
+
+- [ML system design](docs/ml_system_design.md): problem, impact, architecture, implementation rationale, security, bias, ethics, and operational risks.
+- [Rubric coverage and evidence](docs/rubric_coverage.md): code paths and remaining account-run/team deliverables.
+- [Video outline](docs/demo_outline.md): timed narration, equal participation, and evidence to record.
+
+The managed DAG is **Train → Evaluate on test → Quality gate → Register (PendingManualApproval) or Fail**. Model and threshold selection use validation only. The newest reserved-production split remains untouched by this workflow. Batch deployment requires an approved registry package by default. Monitoring here is an implemented custom drift/performance report with CloudWatch integration, not a configured SageMaker Model Monitor schedule.
 
 ## Data pipeline contributions
 
@@ -21,9 +42,12 @@ The data-pipeline ownership area delivered in this repository includes:
 ```text
 configs/       Portable JSON configurations for validation, EDA, features, and splits
 docs/          Dataset inventory, EDA, feature-preparation, and temporal-split documentation
-notebooks/     Submitted Jupyter notebook: EDA, feature preparation, and split results
+notebooks/     EDA notebook and account-portable SageMaker system notebook
 scripts/       CLI entry points for reproducible local pipeline stages
-src/           Reusable Python modules; core logic is not notebook-only
+src/           Reusable data and AWS orchestration modules
+sagemaker_src/ Managed training, evaluation, inference, and custom monitoring code
+tests/         Synthetic data, leakage, inference, and cloud-contract checks
+.github/       CI checks and optional account-configured AWS workflow
 data/raw/      Local-only EMBER2024 source JSONL files; ignored by Git
 data/processed/ Local-only prepared features and final splits; ignored by Git
 reports/       Local-only validation and EDA reports; ignored by Git
@@ -91,7 +115,7 @@ Open `notebooks/01_ember2024_eda.ipynb` in Jupyter after its required artifacts 
 
 ## S3 handoff for AWS Learner Lab
 
-AWS access is only required for the teammate responsible for AWS/S3/SageMaker work. The data pipeline is local-first. Do not commit credentials, access keys, bucket names containing personal information, or large data files.
+Each teammate running the SageMaker notebook needs their own authorized AWS session, execution role, and existing S3 bucket. The data pipeline remains local-first. Do not commit credentials, access keys, per-account configuration, or large data files. Cross-account access to another teammate's handoff bucket must be granted by that bucket's owner, or the data must be copied into your own bucket first.
 
 ### 1. Configure AWS access
 
@@ -163,3 +187,12 @@ Keep raw data immutable. When a later pipeline version is created, write it unde
 - [EDA instructions](docs/eda.md)
 - [Feature preparation](docs/feature_preparation.md)
 - [Final temporal split strategy](docs/temporal_split_strategy.md)
+
+## Local verification
+
+```bash
+python -m unittest discover -s tests -v
+python scripts/validate_notebooks.py
+```
+
+Tests use synthetic records and AWS stubs; they do not download EMBER2024, create cloud resources, or establish production accuracy. Notebook outputs are intentionally cleared for sharing. After a real run, save charts, reports, execution ARNs, registry version, and batch outputs as evidence in your private versioned S3 prefix. Review outputs before committing any executed notebook. No teammate identities or contributions are fabricated; each member must commit their own work and participate in the recording.

@@ -6,12 +6,14 @@ The project uses `ember2024_win64_temporal_hybrid_v1`, a four-way strictly chron
 
 | Final split | Source weeks | Dates | Source partition | Role |
 |---|---:|---|---|---|
-| Train | 40 | 2023-09-24 to 2024-06-29 | Official train | Future model fitting only |
-| Validation | 12 | 2024-06-30 to 2024-09-21 | Official train | Future model/threshold selection only |
+| Train | 40 | 2023-09-24 to 2024-06-29 | Official train | Preprocessing fit and model fitting only |
+| Validation | 12 | 2024-06-30 to 2024-09-21 | Official train | Candidate/threshold selection only |
 | Test | 6 | 2024-09-22 to 2024-11-02 | Official test | Unseen newer-threat evaluation |
 | Reserved production | 6 | 2024-11-03 to 2024-12-14 | Official test | Final untouched newest-time evaluation |
 
 This order prevents future information from entering earlier splits. All rows are deduplicated by SHA-256 during feature preparation, and test records whose hash was already observed in train are removed before split creation.
+
+The feature preparer's inclusive `fit_end_week: "2024-06-23"` refers to the start of the final model-training week, not June 23 as the last accepted day. All fitted normalization statistics come from the first 40 weeks; the schema declares `fit_scope: "model_train_only"`. Earlier schemas fitted over the entire supplied official-training partition require genuine regeneration before this strict protocol is claimed.
 
 ## Important interpretation
 
@@ -34,3 +36,9 @@ python scripts/create_temporal_splits.py
 The split directory contains `train.csv`, `validation.csv`, `test.csv`, `reserved_production.csv`, a shared `split_manifest.json`, and one metadata JSON document per split. Every metadata document includes row count, class distribution, source-partition/week counts, feature schema name/fingerprint/order, generation timestamp, and effective configuration.
 
 Use only the feature columns named in the schema for training. `record_id`, `label`, `source_partition`, and source-week fields are metadata, not model features.
+
+## Training and operational boundaries
+
+`sagemaker_src/training.py` fits a fixed candidate set using `train.csv`, selects the candidate and operating threshold using `validation.csv`, and saves that decision. `sagemaker_src/evaluate.py` computes metrics for the frozen model using `test.csv`. Do not refit on validation, adjust the threshold using test labels, or keep changing candidates after seeing the test report while describing it as a fresh holdout evaluation.
+
+The SageMaker notebook and helper defaults omit `reserved_production.csv` from downloads and cloud inputs. The reserve is not used for feature-store examples, drift demonstrations, batch examples, candidate fitting, threshold selection, or release gates. A later reserve evaluation requires an explicit plan and must be documented separately. Batch and monitoring demonstrations use the project test subset and must be labeled as demonstrations on known evaluation data, not live production evidence.

@@ -20,6 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-root")
     parser.add_argument("--output-dir")
     parser.add_argument("--schema-path")
+    parser.add_argument("--fit-end-week", help="Inclusive model-training week-start cutoff; default 2024-06-23.")
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args()
 
@@ -28,7 +29,7 @@ def main() -> int:
     args = parse_args()
     configure_logging(logging.DEBUG if args.verbose else logging.INFO)
     values = load_feature_prep_config(args.config)
-    config = make_feature_prep_config(values, data_root=args.data_root, output_dir=args.output_dir, schema_path=args.schema_path)
+    config = make_feature_prep_config(values, data_root=args.data_root, output_dir=args.output_dir, schema_path=args.schema_path, fit_end_week=args.fit_end_week)
     report = prepare_features(config)
     logging.getLogger(__name__).info("Feature preparation complete: %s", report["partitions"])
     return 0

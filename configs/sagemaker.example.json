@@ -1,0 +1,40 @@
+{
+  "project": "aai540-malware",
+  "member": "your-name",
+  "run_id": null,
+  "cloud_execution": false,
+  "aws": {
+    "region": "us-east-1",
+    "profile": null,
+    "bucket": "YOUR-EXISTING-BUCKET",
+    "role_arn": null,
+    "prefix": "aai540/model-training"
+  },
+  "data": {
+    "processed_dir": "data/processed/ember2024_win64_static_v1",
+    "split_dir": "temporal_splits_v1",
+    "handoff_s3_uri": "s3://YOUR-HANDOFF-BUCKET/ember2024/processed/ember2024_win64_static_v1",
+    "allow_legacy_preprocessing": false
+  },
+  "quality": {"max_fpr": 0.01, "min_recall": 0.50, "min_roc_auc": 0.80},
+  "compute": {
+    "framework_version": "1.4-2",
+    "py_version": "py3",
+    "image_tag": "1.4-2-py312",
+    "image_uri": null,
+    "training_instance_type": "ml.m5.xlarge",
+    "processing_instance_type": "ml.m5.xlarge",
+    "batch_instance_type": "ml.m5.xlarge",
+    "volume_size_gb": 30,
+    "max_runtime_seconds": 7200,
+    "seed": 540
+  },
+  "feature_store": {
+    "enabled": false,
+    "sample_rows": 100,
+    "disable_glue_table_creation": true
+  },
+  "monitoring": {"namespace": "AAI540/MalwareDetection"},
+  "reports_dir": "reports/model_training",
+  "source_dir": "sagemaker_src"
+}
