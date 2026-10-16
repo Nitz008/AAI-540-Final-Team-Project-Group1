@@ -1,144 +1,136 @@
-# Run the training branch in your own SageMaker account
+# Reproduce baseline, model comparison, and final evaluation
 
-This runbook uses [`marco-model-training-evaluation`](https://github.com/dodo0-0/AAI-540-Final-Team-Project-Group1/tree/marco-model-training-evaluation) and `notebooks/02_sagemaker_training_evaluation.ipynb`. Each member supplies their own AWS identity, region, execution role, and existing S3 bucket. Account-specific values and credentials are not distributed with the notebook. The default notebook switches leave AWS resource creation disabled.
+Use `notebooks/02_sagemaker_training_evaluation.ipynb` on the [`marco-model-training-evaluation` branch](https://github.com/dodo0-0/AAI-540-Final-Team-Project-Group1/tree/marco-model-training-evaluation). The workflow covers ML modeling and a model handoff. It does not create deployment or monitoring infrastructure. Each teammate uses their own environment, existing S3 bucket, and allowed SageMaker execution role.
 
-## 1. Clone and prepare a kernel
+## 1. Clone and install
 
-In a SageMaker Studio JupyterLab terminal, or a configured Linux environment:
+From a SageMaker JupyterLab terminal:
 
 ```bash
 git clone --branch marco-model-training-evaluation --single-branch https://github.com/dodo0-0/AAI-540-Final-Team-Project-Group1.git
 cd AAI-540-Final-Team-Project-Group1
 python -m pip install -r requirements-sagemaker.txt
 cp configs/sagemaker.example.json configs/sagemaker.local.json
+jupyter lab notebooks/02_sagemaker_training_evaluation.ipynb
 ```
 
-On Windows PowerShell, replace the last command with:
+Use a Python 3.12 kernel with the installed dependencies; restart it if older packages are already imported. The notebook resolves its repository root and uses reusable code in `sagemaker_src`. The dependency set uses SageMaker SDK v2 and XGBoost 3.0.5. CPU-only XGBoost is available for x86_64 Linux/Windows, as described in [the official installation guide](https://xgboost.readthedocs.io/en/release_3.0.0/install.html). Installation requires permitted network access; managed training installs the extra dependency from `sagemaker_src/requirements.txt` before running the entry point.
 
-```powershell
-Copy-Item -LiteralPath configs/sagemaker.example.json -Destination configs/sagemaker.local.json
-```
+The AWS image and notebook dependency versions must remain compatible when loading a trusted serialized model. As checked October 15, 2026, the selected scikit-learn Python 3.12 image `1.4-2-py312` reaches end of patch support on October 30, 2026 according to [AWS's support policy](https://docs.aws.amazon.com/en_en/sagemaker/latest/dg/pre-built-containers-support-policy.html). Review current regional availability/support before later use and test any replacement. The SDK `py3` selector is separate from the explicit Python 3.12 image tag; do not substitute an unverified container because its label looks similar.
 
-Use a **Python 3.12** kernel where dependencies were installed and run from the repository root; the notebook resolves its repository path if opened from `notebooks/`. Restart the kernel after dependency installation if an old SageMaker SDK is already imported. This branch uses SageMaker Python SDK **v2** (`>=2.257,<3`), constrained in `requirements-sagemaker.txt`; a preinstalled SDK v3 requires a separate kernel/environment or the pinned installation.
+## 2. Configure paths and your AWS account
 
-The default job image is the region-specific AWS scikit-learn tag `1.4-2-py312`, listed in [AWS available images](https://aws.github.io/deep-learning-containers/reference/available_images/#scikit-learn). The SDK's `compute.py_version` selector remains `py3`; it is not the image's Python interpreter version. The helper resolves the regional ECR repository and supplies the Python 3.12 tag explicitly, or accepts `compute.image_uri` as a reviewed override. As checked October 15, 2026, AWS lists **October 30, 2026** as this image's end of patch support in [the support policy](https://docs.aws.amazon.com/en_en/sagemaker/latest/dg/pre-built-containers-support-policy.html). Review supported images before later operational use and test any replacement against training, evaluation, and serving together. Local synthetic checks do not establish that a particular regional image was pulled successfully.
+Use the notebook's configuration cell and `configs/sagemaker.example.json`. Keep personal settings in the ignored `configs/sagemaker.local.json`; in PowerShell, copy it with `Copy-Item -LiteralPath configs/sagemaker.example.json -Destination configs/sagemaker.local.json`. Do not include credentials in that JSON or notebook outputs. Local debugging needs downloaded prepared data and installed packages; it does not require starting a managed job.
 
-## 2. Verify credentials and account controls
+| Configuration field | Value to supply or review |
+|---|---|
+| `member` | Short non-sensitive identifier for your own run namespace. |
+| `aws.region`, `aws.profile` | Region and optional local AWS profile; `null` profile uses normal notebook/lab providers. |
+| `aws.bucket`, `aws.role_arn`, `aws.prefix` | Existing output bucket, allowed execution role, and project prefix. |
+| `data.handoff_s3_uri` | The matching shared processed-data version supplied by the data owner. |
+| `data.processed_dir`, `data.split_dir` | Local handoff layout, normally the README paths. |
+| `data.minimum_class_rows` | Initially 10,000 in each class in the actual training CSV, before optional fitting subsampling. |
+| `data.allow_legacy_preprocessing` | Keep `false` for the final leakage-safe experiment. |
+| `compute.training_instance_type` | Account-permitted CPU training instance. |
+| `compute.max_train_rows`, `compute.seed` | Initially 250,000 and 540; `0` cap uses all training rows. Keep baseline/comparison settings equal. |
+| `compute.image_uri` / `compute.image_tag` | Reviewed full regional override, or documented default `1.4-2-py312` tag. |
+| `selection` | Leave unapproved with no FPR until the baseline-dependent decision stage. |
+
+Keep the loaded run ID and configuration for the entire experiment; managed output prefixes include member and run ID to avoid mixing teammates' artifacts.
+
+For AWS operations, verify the active identity:
 
 ```bash
 aws sts get-caller-identity
 aws configure get region
 ```
 
-In SageMaker, use the assigned notebook/Studio role through the AWS credential provider chain. Locally, use an AWS profile, IAM Identity Center session, or temporary Learner Lab credentials supplied outside the repo. For temporary credentials, the session token is required as well as the access key and secret. Expired lab credentials must be refreshed in the runtime environment. Never paste credentials into notebook cells, configuration files, committed outputs, or screenshots.
+Use the notebook role, an AWS profile/SSO session, or Learner Lab temporary credentials through the normal AWS provider chain. Temporary access also needs its session token. Confirm access to the input bucket/prefix and your output bucket, which may have different owners, and choose an output bucket in the job region. Needed permissions cover scoped S3 reads/writes, SageMaker training describe/create/stop, and passing the existing execution role. The helper does not create IAM roles, buckets, or administrator permissions.
 
-Choose an existing bucket in the job region and an execution role your identity is permitted to pass to SageMaker. Needed actions depend on enabled sections: S3 read/write for input/output prefixes; SageMaker training, processing, pipeline and registry APIs; `iam:PassRole` for the execution role; Feature Store creation/runtime ingestion when enabled; CloudWatch dashboard/metric operations when enabled; batch transform and model APIs for inference. Offline Feature Store may also need S3, KMS, and catalog permissions. Review [SageMaker data protection](https://docs.aws.amazon.com/sagemaker/latest/dg/data-protection.html), bucket public-access settings, encryption, and retention before uploading.
+Learner Lab can restrict roles, instance families, quotas, network access, or SageMaker APIs. Use the supplied permitted role and instance types. If a job or package install is denied, retain the sanitized error and resolve the specific permission, network, image, or quota issue with the account owner. A local run is useful evidence of modeling behavior but must not be described as a successful managed AWS job. Protect private S3 artifacts, encryption settings, credentials, and sensitive file identifiers.
 
-AWS Learner Lab often limits `iam:CreateRole`, `iam:PassRole`, allowed instance types, Feature Store, Glue, pipelines, or dashboards. Use the existing allowed lab role rather than attempting to create a new administrator role. If a required action is denied, record the action, role, service, and sanitized error in the final evidence; ask the lab/instructor for the supported role or permitted service. A disabled optional section, local plot, or synthetic test must not be described as successful AWS operation. Request a permitted region/instance or quota adjustment before retrying a rejected job; do not assume notebook access implies every service is available.
+## 3. Obtain the corrected train/validation handoff
 
-## 3. Configure your run
-
-Edit the ignored `configs/sagemaker.local.json`. Required replacements include:
-
-| Field | Meaning |
-|---|---|
-| `member` | Short non-sensitive identifier, using letters, digits, or hyphens; avoids collisions between members. |
-| `aws.region` | Region for the bucket and SageMaker jobs. |
-| `aws.profile` | Local AWS profile name, or `null` for notebook/lab credentials. |
-| `aws.bucket` | Your existing output bucket, without `s3://`. |
-| `aws.role_arn` | Allowed SageMaker execution-role ARN. The context helper may resolve an assigned role, but an explicit account value is easiest to audit. |
-| `aws.prefix` | Your project output prefix. Run outputs also include member and run ID. |
-| `data.handoff_s3_uri` | Shared processed-data prefix supplied by the data owner. This can be a different authorized bucket from your output bucket. |
-| `data.processed_dir` | Local prepared-data root, default `data/processed/ember2024_win64_static_v1`. |
-| `data.allow_legacy_preprocessing` | Keep `false` for the final leakage-safe experiment. |
-| `quality.max_fpr` | Validation operating budget and test release gate, initially `0.01`. |
-| `quality.min_recall`, `quality.min_roc_auc` | Test acceptance gates, initially `0.50` and `0.80`. These are proposed requirements, not attained scores. |
-| `compute.*_instance_type` | Allowed training, processing, and batch instance types. |
-| `compute.framework_version`, `compute.py_version` | Defaults `1.4-2` and SDK selector `py3`; explicit resolved AWS image uses tag `1.4-2-py312`. |
-| `compute.image_uri` | Optional full regional compatible image URI; keep `null` to use the documented resolver. |
-| `feature_store.enabled`, `feature_store.sample_rows` | Enable a bounded training-only feature group demonstration with online and offline storage, initially 100 rows. |
-| `feature_store.disable_glue_table_creation` | Defaults to `true`; offline S3 delivery still occurs, while optional catalog/Athena work needs extra permissions and setup. |
-| `cloud_execution` | Keep `false` until intentionally running the AWS sections. |
-
-Leave `run_id` as `null` to generate a unique ID once per configuration load. Reuse the loaded configuration object throughout one notebook run so resources and evidence refer to the same ID. Do not change the quality gates after inspecting a test result and call it a fresh evaluation. For configuration merging from code, `load_config(path, overrides={...})` accepts nested overrides; values may be supplied from environment variables without saving personal account settings in Git.
-
-The notebook supports `AAI540_CONFIG` for a different local config path and reads `AWS_REGION`, `AAI540_BUCKET`, `SAGEMAKER_ROLE_ARN`, `AAI540_HANDOFF_S3_URI`, and `AAI540_MEMBER` as overrides. These account identifiers are configuration, not credentials. AWS credentials remain with the normal provider chain. For example, a terminal launched before Jupyter can export the bucket and role, or PowerShell can set `$env:AAI540_BUCKET` and `$env:SAGEMAKER_ROLE_ARN`; the kernel must inherit those values.
-
-## 4. Acquire and validate the handoff
-
-The data owner must publish the following **matching version** of the artifacts:
+Initial modeling needs these matching artifacts:
 
 ```text
-feature_schema.json
-temporal_splits_v1/
-    train.csv
-    validation.csv
-    test.csv
-    split_manifest.json
+data/processed/ember2024_win64_static_v1/
+    feature_schema.json
+    temporal_splits_v1/
+        train.csv
+        validation.csv
+        split_manifest.json
 ```
 
-The notebook's optional `DOWNLOAD_HANDOFF` section calls `download_handoff` for these named files only. It omits `reserved_production.csv` and raw JSONL. The manifest can describe all four splits while no reserve records are downloaded. If the files are already present, leave `DOWNLOAD_HANDOFF=False` and validate them locally. Reading a shared handoff needs permission on its bucket and any KMS key, as well as credentials in your own account.
+Set `DOWNLOAD_HANDOFF=True` only when downloading the handoff from S3 is necessary. Default helpers download and validate train/validation/schema/manifest only. Test data is deferred until the explicit final-test stage, and `reserved_production.csv` is excluded throughout. Existing local test files are not permission to use them during baseline or comparison. The shared manifest can describe test/reserve counts without opening their CSVs.
 
-Before any cloud training, `validate_handoff` checks the schema hash against the split manifest, exact columns and feature order, binary classes, finite values, row counts, unique identifiers across train/validation/test, source partitions, and chronological order. The strict trainer also verifies the preprocessing fit boundary. Expected schema declarations are `fit_scope: "model_train_only"` and `fit_end_week: "2024-06-23"`, the start of the final model-training week. Every model-input matrix follows `model_feature_columns`; label and lineage columns must never enter inference payloads.
+Validate schema fingerprint and exact columns/order, numeric finite features, binary labels, minimum training class counts, non-overlapping record IDs, source partitions, and chronology. The full actual train CSV must have at least `data.minimum_class_rows` observations per class before model-fitting subsampling; validation must have both classes. Synthetic fixtures with a lower configured minimum remain code tests. Use only `model_feature_columns` as `X`; exclude `record_id`, `label`, `source_partition`, and source-week metadata. Expected preprocessing declares `fit_scope: "model_train_only"` and inclusive week-start cutoff `2024-06-23`, covering June 23–29. The 12 later official-training weeks are validation and cannot contribute to normalization.
 
-**If the old handoff fails:** ask the data owner to regenerate, rather than modifying the schema declaration. From a machine with the raw data, run:
+If the old handoff was fitted over all 52 official-training weeks, the data owner must regenerate it from raw data:
 
 ```bash
 python scripts/prepare_features.py --fit-end-week 2024-06-23
 python scripts/create_temporal_splits.py
 ```
 
-The corrected preparer fits on the first 40 weeks and transforms later periods with those saved statistics. Publish the new schema, CSVs, reports and manifest together under a fresh versioned S3 prefix; update `data.handoff_s3_uri` accordingly. The raw data is about 31.24 GiB locally, so regeneration is best performed once by the data owner. The explicit legacy override only supports exploratory compatibility and must be disclosed; it does not satisfy the final leakage-safe protocol.
+Publish the resulting schema, CSVs, processing report, manifest, and metadata together under a fresh S3 prefix. Do not edit an old schema to claim a new cutoff or mix files from different versions. The explicit legacy compatibility override is exploratory only and must remain disclosed in every resulting report. See [feature preparation](feature_preparation.md) and [temporal strategy](temporal_split_strategy.md).
 
-## 5. Run the notebook in stages
+## 4. Run the baseline first
 
-Open `notebooks/02_sagemaker_training_evaluation.ipynb` and run its setup/configuration cells. Inspect configuration and handoff validation output first. The notebook separates optional paid operations with these switches:
+The notebook defaults to the following controls:
 
-| Switch | Operation when enabled |
+| Control | Default and purpose |
 |---|---|
-| `RUN_AWS` | Establish account context, upload selected input channels, and create/start the training pipeline. Sets the loaded config's cloud guard. |
-| `DOWNLOAD_HANDOFF` | Fetch only the named non-reserve handoff files. Requires AWS execution context. |
-| `RUN_LOCAL_TRAINING` | Debug the same training/evaluation entry points locally using downloaded data. Creates no SageMaker training job and does not satisfy AWS operation evidence. |
-| `RUN_FEATURE_STORE` | Create a real feature group and ingest a bounded sample of training rows. |
-| `RUN_FAILURE_DEMO` | Start a separately labeled forced quality-gate failure execution. |
-| `RUN_BATCH` | Run paid batch inference from the registered package. |
-| `APPROVE_MODEL` | Explicitly approve a chosen package before a production-oriented batch run. Review that version first. |
-| `PUBLISH_DASHBOARD` | Publish custom metrics and create/update the account CloudWatch dashboard. |
-| `RUN_CLEANUP` | Invoke the documented cleanup of tracked run resources after inventory review. |
+| `EXECUTION_MODE` | `"local"`; choose `"sagemaker"` for managed baseline/comparison jobs. |
+| `RUN_AWS` | `False`; explicitly enable cloud operations after account setup. |
+| `DOWNLOAD_HANDOFF` | `False`; optionally fetch named handoff artifacts. |
+| `RUN_BASELINE` | `False`; run the standalone Logistic Regression baseline. |
+| `POLICY_READY` | `False`; record the post-baseline policy decision only after reviewing tradeoffs. |
+| `MAX_FPR` | `None`; no acceptable FPR is assumed to have been approved. |
+| `DECISION_NOTE` | Empty; explain the selected FPR budget and tradeoffs. |
+| `RUN_COMPARISON` | `False`; compare the three model families using the frozen policy. |
+| `RUN_FINAL_TEST` | `False`; separately opt into final test only after a winner is frozen. |
 
-Enable only the sections you intend to execute. A real train/evaluate pipeline can create multiple paid compute jobs; Feature Store, S3, dashboards, logs, and notebook apps can also accrue costs. Allow jobs to finish before restarting the kernel or changing configuration. The CLI offers the same reusable path through `scripts/run_sagemaker_pipeline.py`; use `python scripts/run_sagemaker_pipeline.py --help` for its current arguments.
+Enable `RUN_BASELINE` after validating the train/validation handoff. Local mode runs the shared training entry point in the kernel environment; SageMaker mode launches a paid training job with train, validation, and schema channels only. Inspect its actual report and validation threshold table/curves. The baseline does not determine the final model and does not inspect test labels. Counts, parameters, data/schema provenance, and runtime versions should be visible with the baseline results.
 
-The model compares logistic regression, random forest, and histogram gradient boosting, fitting estimators on train and selecting candidate/threshold on validation. The entry point's default deterministic stratified cap is 250,000 training rows, with available/used counts in `training_report.json`; `--max-train-rows 0` uses all training rows when compute allows. The evaluation job then uses the frozen model on test. Review the candidate comparison, selected threshold, sample counts, test metrics and weekly plots. A failing test gate is a valid outcome; keep the report and diagnose the limitation using an appropriate new experiment rather than silently loosening the gate or consuming the reserve.
+## 5. Decide and freeze the selection policy
 
-## 6. Validate each required AWS component
+Use baseline validation behavior to choose `MAX_FPR` and write `DECISION_NOTE`. The budget is an operating assumption about benign false alerts; a threshold with an observed FPR below the limit does not guarantee future production FPR. Review benign sample count and false-positive resolution. Do not choose the limit after inspecting the project test results.
 
-**Pipeline and registry:** save the execution report and actual SageMaker execution ARN. In the account console, show the successful Train → Evaluate → Condition → Register path when the real result passes. Inspect the package ARN, evaluation report reference, and `PendingManualApproval` state. Run the deliberate failure control separately with `RUN_FAILURE_DEMO=True` and show its condition/Fail path and reason. Label it as a forced failure in narration and filenames. If the normal run fails on quality or permissions, report that outcome; do not substitute a fabricated success screenshot.
+The example proposes RFC Option A: recall 30%, FPR 25%, PR-AUC 15%, F1 10%, local latency 10%, model size 5%, and interpretability 5%. The proposed latency/size reference values and LR/RF/XGBoost interpretability priors are explicit configurable assumptions. Precision, ROC-AUC, accuracy, and qualitative deployment complexity remain reported outside that weighted formula. Confirm the selected weights before comparison; the example is not prior team approval.
 
-**Feature Store:** enable the training-only sample and display the feature group's schema, record identifier, event time, and online/offline stores. The helper verifies a sample record through the online runtime API; show the offline S3 destination and actual delivery after propagation separately. The default disables Glue table creation to reduce lab/catalog dependencies; it does not disable offline S3 delivery. The sample demonstrates managed storage and does not replace S3 CSV training inputs. [AWS Feature Store concepts](https://docs.aws.amazon.com/sagemaker/latest/dg/feature-store-concepts.html) explains the identifier and event-time contract. Record permissions/availability limitations honestly if the lab cannot create the feature group.
+Set `POLICY_READY=True` only after the baseline review and decision. The notebook saves `selection_policy.json` with an approved flag, FPR limit, weights, rationale, canonical baseline-report SHA-256, and a timestamp no earlier than baseline generation. The comparison validates that link. Keep the policy and baseline report together; do not reuse a policy for a different data/schema version or change weights after seeing final test behavior.
 
-**Batch deployment:** use the package returned by the passing registry step. Review and explicitly approve a production-bound package; any pending-package demonstration must be clearly identified as a demonstration. The helper builds a features-only payload from the test split, preserving the saved schema order and removing targets, hashes, and lineage. Record transform job name/status and S3 output URI. Display actual scores/decisions and output row count, keeping source labels separate from the serving request. These predictions are an evaluation demonstration on known test records, not live production results.
+## 6. Compare Logistic Regression, Random Forest, and XGBoost
 
-**Monitoring and dashboard:** generate a custom PSI/drift report using the saved training-reference histograms and the demonstration batch. Include delayed-label metrics only when matching labels are actually available. Display counts, alerts, scope, and the associated run/job timestamps; drift alone does not establish an accuracy drop. Missingness here concerns normalized inputs; raw missingness was already imputed and cannot be recovered from these files. Publish it through the observability helper and open the actual CloudWatch dashboard with its custom metrics and available job/service metrics. Empty panels can indicate no emitted metric, wrong region/dimensions, propagation delay, or missing permissions; a dashboard JSON definition is not proof that metric samples arrived.
+Enable `RUN_COMPARISON` with the frozen policy and baseline report. The bounded search evaluates two predefined trials per model family, fits estimators only on train, and selects thresholds/trials using validation. Review raw metrics and normalized score components alongside the final weighted score. Check the report's actual available/used rows if a training cap is configured. The selected estimator and threshold remain frozen without refitting on validation.
 
-## 7. Retain evidence and clean up
+Inspect recall, FPR, precision, F1, PR-AUC, ROC-AUC, accuracy, confusion counts, local `predict_proba` p50/p95 timing, serialized bundle size, and interpretability/deployment assumptions. Timing uses up to 32 seeded validation rows, three warmup calls, then one single-record call per selected row. It is environment-specific model computation, not a SageMaker endpoint response-time measurement. Use the same benchmark settings across candidates and retain measured row count, warmup count, seed, platform/package versions and the managed instance type when applicable. Bundle size is compressed `joblib` bytes, with schema/report/source overhead excluded. Curves and charts must be generated from actual outputs, not filled with example results.
 
-Keep a sanitized run record with commit SHA, schema/manifest versions and hashes, effective configuration, account/region, execution IDs, actual model scores, package ARN/approval state, batch URI, drift JSON URI, feature-group name, and dashboard name. Save screenshots/clips only after verifying the shown account and timestamps. Do not commit large datasets, downloaded model archives, session credentials, or generated notebook outputs containing sensitive information. Local reports remain under the configured ignored reports directory; durable evidence belongs in the team's restricted S3 output prefix and final reviewed submission.
+Managed runs return model artifacts and reports through your output bucket. Download only your own trusted training artifact and use the allowlisted extraction helper. Preserve the model bundle, schema, baseline/comparison reports, policy, chosen parameters, hashes, source commit, seeds, versions, and actual training job name/artifact URI. `joblib` deserialization is executable, so do not load arbitrary shared model archives.
 
-Review the cleanup inventory before enabling `RUN_CLEANUP`. The helper requires the exact current run ID and checks tracked resources so unrelated team resources are not targeted. Wait for active training, processing, and transform jobs to finish or stop them deliberately. Delete disposable registered-model entities, feature groups, and dashboards where the helper supports them; inspect and remove any remaining run-scoped resources manually. S3 outputs and retained logs may intentionally remain after compute cleanup. Delete those only after the team has retained the required evidence and reviewed retention/access needs. Do not delete shared raw data, handoffs, package groups, or another member's resources.
+## 7. Optional final test
 
-Stop idle SageMaker notebook instances or Studio apps through the service console after saving work. Review S3 object lifecycle, CloudWatch log retention, offline Feature Store S3 files, and any Glue metadata separately; deleting a feature group does not imply that every historical storage object was removed. No persistent real-time endpoint is part of the default workflow. For the final video and submission checklist, use [demo outline](demo_outline.md) and [rubric coverage](rubric_coverage.md).
+Only after the winner, threshold, and policy are saved should you enable `RUN_FINAL_TEST`. The workflow then requests/downloads the six-week project test subset, validates its chronology/schema/IDs against the earlier handoff, and evaluates the frozen model. `sagemaker_src/evaluate.py` requires an explicit `--confirm-final-test true` opt-in. Evaluation runs in the current local or SageMaker notebook kernel; this scope does not create an additional processing job or upload test data to a training job.
+
+Retain the final report and plots with test counts, confusion matrix, recall/FPR, precision/F1, PR-AUC/ROC-AUC, accuracy, weekly behavior, threshold, and provenance. Describe the dataset as an **official-test-derived temporal subset**, because the official test period is split between project test and reserve. Do not retune a model, alter the threshold/weights, or open the reserve in response to the test result. Missing real artifacts mean results are pending; no score or cloud success should be inferred from source code or synthetic checks.
+
+## 8. Hand off artifacts and stop idle compute
+
+Give teammates `model.joblib`, `feature_schema.json`, `baseline_report.json`, `training_report.json`, `selection_policy.json`, optional `evaluation.json` and plots, source/data fingerprints, runtime versions, and actual job/S3 identifiers. The baseline and comparison model directories are separate; hand off the selected comparison model for downstream work. Keep data, credentials, personal account JSON, and large generated artifacts out of Git. This handoff supports the separate integration workstreams; it does not claim an endpoint, registry, Feature Store, or monitoring service has been created.
+
+Managed training jobs terminate after completion, but notebook instances/Studio apps and retained S3 objects can continue to incur charges. Stop idle notebook compute after saving outputs, check for any interrupted training job, and apply the team's reviewed artifact-retention policy. Do not remove a shared handoff or another member's data. This workflow does not provision persistent inference resources needing teardown.
 
 ## Troubleshooting
 
-| Symptom | Action |
+| Symptom | Next action |
 |---|---|
-| `ExpiredToken` / identity mismatch | Refresh the lab/SSO session, confirm `sts get-caller-identity`, and recreate the boto session. |
-| `AccessDenied` / role cannot be passed | Verify the intended identity, execution role and scoped permissions; record lab limitations. |
-| S3/KMS denied or wrong region | Verify handoff/output bucket region, prefix access and KMS key policy; the two buckets can have different owners. |
-| Missing handoff or schema hash mismatch | Obtain a complete matching artifact version; do not mix an old manifest with new features. |
-| Legacy preprocessing rejected | Regenerate features/splits with the corrected 40-week fit boundary. |
-| No approved instance quota or container image unavailable | Select an allowed regional instance/container combination and consult current AWS support; retain the error as evidence if unavailable. |
-| Pipeline rejected genuine model quality | Preserve metrics, discuss model limitations, and design a new training/validation experiment without reserve leakage. |
-| Feature Store/Glue unavailable in lab | Use the supported configuration if permitted; otherwise document the missing rubric evidence and request instructor guidance. |
-| No metric on dashboard | Verify namespace, dimensions, region, publishing result, and time range; wait for normal service propagation. |
-| Notebook dependency conflict | Install the pinned requirements into a clean kernel/environment and restart before imports. |
+| Legacy preprocessing rejected | Regenerate features/splits with the 40-week fit boundary; preserve version consistency. |
+| Schema hash, columns, or row counts disagree | Obtain a complete matching handoff instead of changing metadata to fit the files. |
+| Minimum class count rejected | Inspect actual count scope and dataset version; synthetic downsampled data is not the real-data requirement. |
+| Comparison rejects policy | Run/review baseline first and save its linked post-baseline policy with budget, weights and rationale. |
+| XGBoost install/import fails | Check pinned package/platform support, Python environment, permitted network access and job logs. |
+| AWS identity/role denied or token expired | Refresh temporary credentials and verify the intended role/account and scoped `iam:PassRole`. |
+| Instance, quota, image or S3 access rejected | Use an allowed regional combination and verify bucket/key permissions; retain actual error evidence. |
+| Final evaluation refuses to run | Confirm explicit final-test opt-in and a trusted saved comparison winner/policy. |
+| Score or latency differs across environments | Compare source/data/package versions, seed, row caps and timing settings; report measured context. |

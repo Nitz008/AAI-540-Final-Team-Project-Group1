@@ -37,8 +37,8 @@ The split directory contains `train.csv`, `validation.csv`, `test.csv`, `reserve
 
 Use only the feature columns named in the schema for training. `record_id`, `label`, `source_partition`, and source-week fields are metadata, not model features.
 
-## Training and operational boundaries
+## Modeling boundaries
 
-`sagemaker_src/training.py` fits a fixed candidate set using `train.csv`, selects the candidate and operating threshold using `validation.csv`, and saves that decision. `sagemaker_src/evaluate.py` computes metrics for the frozen model using `test.csv`. Do not refit on validation, adjust the threshold using test labels, or keep changing candidates after seeing the test report while describing it as a fresh holdout evaluation.
+`sagemaker_src/training.py` fits the baseline and bounded candidate trials using `train.csv`. Baseline validation tradeoffs inform an explicit FPR budget and weighted policy before comparison; validation then selects the candidate and operating threshold. The winner, threshold, and policy are saved before the separately enabled `sagemaker_src/evaluate.py` step uses `test.csv`. Do not refit on validation, adjust the threshold using test labels, or keep changing candidates after seeing the test report while describing it as a fresh holdout evaluation.
 
-The SageMaker notebook and helper defaults omit `reserved_production.csv` from downloads and cloud inputs. The reserve is not used for feature-store examples, drift demonstrations, batch examples, candidate fitting, threshold selection, or release gates. A later reserve evaluation requires an explicit plan and must be documented separately. Batch and monitoring demonstrations use the project test subset and must be labeled as demonstrations on known evaluation data, not live production evidence.
+The modeling notebook and helper defaults download only train/validation/schema/manifest; the test CSV is requested only for explicit final evaluation after selection is frozen. `reserved_production.csv` is omitted from every modeling download and job input and is never opened. A later reserve evaluation requires a separate plan. The current tracker confirms this hybrid split; the RFC's earlier full-official-test wording must not be used to describe these results.

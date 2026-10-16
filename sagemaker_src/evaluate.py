@@ -1,4 +1,4 @@
-"""Held-out SageMaker Processing evaluation; never changes model or threshold."""
+"""Final temporal evaluation in the notebook runtime; preserves model and threshold."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ import tarfile
 import joblib
 import numpy as np
 
-from training import evaluate_bundle, load_frame
+from training import evaluate_bundle, file_sha256, load_frame, report_hash
 
 
-ARTIFACT_NAMES = {"model.joblib", "feature_schema.json", "training_report.json", "reference_histograms.json"}
+ARTIFACT_NAMES = {"model.joblib", "feature_schema.json", "training_report.json", "selection_policy.json", "baseline_report.json"}
 
 
 def extract_model(model_dir: Path) -> Path:
@@ -49,7 +49,7 @@ def extract_model(model_dir: Path) -> Path:
 
 
 def save_plots(frame, probabilities, threshold: float, output_dir: Path) -> list[str]:
-    """Save held-out graphics if matplotlib is installed in the processing image."""
+    """Save final-test graphics when matplotlib is installed in this runtime."""
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -82,17 +82,28 @@ def save_plots(frame, probabilities, threshold: float, output_dir: Path) -> list
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model-dir", type=Path, default="/opt/ml/processing/model")
-    parser.add_argument("--test-dir", type=Path, default="/opt/ml/processing/test")
-    parser.add_argument("--schema-dir", type=Path, default="/opt/ml/processing/schema")
-    parser.add_argument("--output-dir", type=Path, default="/opt/ml/processing/evaluation")
+    parser.add_argument("--model-dir", type=Path, required=True)
+    parser.add_argument("--test-dir", type=Path, required=True)
+    parser.add_argument("--schema-dir", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, default="reports/model_training/final_test")
+    parser.add_argument("--confirm-final-test", nargs="?", const=True, default=False,
+                        type=lambda value: str(value).lower() == "true",
+                        help="Explicitly confirm the winner/policy were frozen before opening test.csv.")
     args = parser.parse_args()
+    if not args.confirm_final_test:
+        parser.error("--confirm-final-test is required; complete baseline review and comparison first.")
     model_dir = extract_model(args.model_dir)
+    training_report = json.loads((model_dir / "training_report.json").read_text(encoding="utf-8"))
+    if training_report.get("report_sha256") != report_hash(training_report):
+        raise ValueError("Frozen training report was modified.")
+    if training_report.get("model_artifact_sha256") != file_sha256(model_dir / "model.joblib"):
+        raise ValueError("Model artifact changed after comparison.")
     # joblib/pickle is executable: the input artifact must be from a trusted job.
     bundle = joblib.load(model_dir / "model.joblib")
     schema = json.loads((args.schema_dir / "feature_schema.json").read_text(encoding="utf-8"))
     frame = load_frame(args.test_dir / "test.csv", schema)
-    report, probabilities = evaluate_bundle(bundle, frame, schema)
+    report, probabilities = evaluate_bundle(bundle, frame, schema, training_report, confirm_final_test=True)
+    report["test_data_sha256"] = file_sha256(args.test_dir / "test.csv")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     report["graphics"] = save_plots(frame, probabilities, bundle["threshold"], args.output_dir)
     (args.output_dir / "evaluation.json").write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")

@@ -36,9 +36,11 @@ class NotebookDefaultsTest(unittest.TestCase):
                             exec(compile("".join(cell["source"]), f"notebook-cell-{index}", "exec"), namespace)
                     aws_api.assert_not_called()
                 self.assertFalse(namespace["RUN_AWS"])
-                self.assertIsNone(namespace["execution"])
-                self.assertIsNone(namespace["evaluation_report"])
-                self.assertEqual(namespace["inventory"], {})
+                self.assertIsNone(namespace["baseline_artifacts"])
+                self.assertIsNone(namespace["comparison_artifacts"])
+                self.assertIsNone(namespace["final_report"])
+                self.assertIsNone(namespace["policy_path"])
+                self.assertFalse(namespace["RUN_FINAL_TEST"])
             finally:
                 os.chdir(previous_cwd)
 
