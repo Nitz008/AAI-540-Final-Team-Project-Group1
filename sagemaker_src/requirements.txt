@@ -1,0 +1,3 @@
+# Script Mode installs this before train.py; ml.m5 instances use x86_64 Linux.
+# Requires outbound package-index access or an organization-managed mirror.
+xgboost-cpu==3.0.5

@@ -7,3 +7,21 @@ reports/eda/
 __pycache__/
 *.py[cod]
 .venv/
+# Per-account configuration, credentials, model artifacts, and generated evidence
+configs/sagemaker.local.json
+.env
+.env.*
+!.env.example
+.aws/
+.ipynb_checkpoints/
+reports/training/
+reports/model_training/
+reports/sagemaker/
+artifacts/
+*.joblib
+*.tar.gz
+.test-deps/
+.build_notebook.py
+.local_checks/
+.test-temp/
+.test-cache/

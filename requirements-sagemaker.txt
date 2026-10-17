@@ -1,0 +1,15 @@
+# Python 3.12; numerical versions match AWS scikit-learn 1.4-2-py312.
+sagemaker>=2.257,<3
+boto3>=1.42.2,<2
+scikit-learn==1.4.2
+numpy==2.1.0
+pandas==2.3.2
+scipy>=1.11,<1.14
+joblib>=1.2,<1.5
+xgboost-cpu==3.0.5; (platform_machine == 'AMD64' or platform_machine == 'x86_64') and (sys_platform == 'win32' or sys_platform == 'linux')
+xgboost==3.0.5; (platform_machine != 'AMD64' and platform_machine != 'x86_64') or (sys_platform != 'win32' and sys_platform != 'linux')
+matplotlib>=3.7,<4
+nbformat>=5.9,<6
+nbclient>=0.9,<1
+ipykernel>=6,<7
+jupyterlab>=4,<5
