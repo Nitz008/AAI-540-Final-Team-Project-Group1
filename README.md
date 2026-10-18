@@ -1,217 +1,118 @@
 # Adaptive Static Malware Detection for Emerging Threats
 
-AAI-540 MLOps Final Team Project - Group 1
+**AAI-540 MLOps Final Team Project — Group 1**
+**Team Members:** Gaurav SS, Marco Gonzalez Ortiz, Nitendra Tiwari
+**Institution:** University of San Diego
+**Repository:** [AAI-540-Final-Team-Project-Group1](https://github.com/dodo0-0/AAI-540-Final-Team-Project-Group1)
 
-This repository contains the reproducible data pipeline and ML modeling workflow for benign-versus-malicious classification of EMBER2024 Win64 static features. The `marco-model-training-evaluation` branch consumes the prepared data handoff to establish a Logistic Regression baseline, compare Logistic Regression, Random Forest, and XGBoost, and evaluate a frozen model on a newer temporal test subset.
+---
 
-## ML modeling on this branch
+## Executive Summary & Deliverables Guide
 
-The project has three members: **Gaurav SS, Marco Gonzalez Ortiz, and Nitendra Tiwari**. This branch focuses on Marco's model-training and evaluation workstream, using the data pipeline and handoff documented below. Its scope follows the project RFC and the [team tracker](https://docs.google.com/document/d/1acXxwMhhT72I4s_3FafBtHH58gxTVbYuXE2U2JbwsPE/edit?tab=t.0).
+This repository contains the complete MLOps engineering codebase, exploratory analysis, candidate model comparison, test evaluation, and system design documentation for benign-versus-malicious classification of Windows 64-bit (Win64) executables based on the EMBER2024 static feature benchmark.
 
-Start with [02_sagemaker_training_evaluation.ipynb](notebooks/02_sagemaker_training_evaluation.ipynb) and the [SageMaker modeling runbook](docs/sagemaker_runbook.md). The notebook supports local debugging and managed SageMaker training in each teammate's own account. An existing S3 bucket, authorized execution role, region, and normal AWS credential provider are used; no credentials are stored in source.
+### Final Course Deliverables (Module 7)
 
-```bash
-git clone --branch marco-model-training-evaluation https://github.com/dodo0-0/AAI-540-Final-Team-Project-Group1.git
-cd AAI-540-Final-Team-Project-Group1
-python -m pip install -r requirements-sagemaker.txt
-cp configs/sagemaker.example.json configs/sagemaker.local.json
-jupyter lab notebooks/02_sagemaker_training_evaluation.ipynb
-```
-
-Use `Copy-Item` for the copy command in PowerShell. Edit the ignored local configuration before starting paid jobs. The default notebook starts no AWS jobs and downloads no final-test data.
-
-The modeling sequence is:
-
-1. Validate the prepared train/validation handoff and its schema; check real class counts and temporal separation.
-2. Fit the Logistic Regression benchmark on training rows and inspect validation threshold tradeoffs.
-3. Choose and record the FPR budget and model-selection policy after baseline review. The RFC's proposed security weights remain configurable and require an explicit recorded decision.
-4. Compare and tune Logistic Regression, Random Forest, and XGBoost using train/validation only. Report classification metrics, measured local inference latency, artifact size, and documented interpretability and deployment tradeoffs.
-5. Freeze the winning model, threshold, policy, and data provenance, then explicitly run final test evaluation once. Leave the newest reserved-production split untouched.
-
-The outputs are model artifacts, validation comparisons, final-test reports and plots, and a reproducible handoff for the teammates integrating deployment and operations. The notebook labels timing as a local CPU inference measurement; it does not claim endpoint latency. No measured real-data scores or successful AWS jobs are supplied with unexecuted source code.
-
-- [ML modeling design](docs/ml_system_design.md)
-- [Scope and source alignment](docs/modeling_scope.md)
-- [SageMaker modeling runbook](docs/sagemaker_runbook.md)
-
-**Preprocessing compatibility:** older handoffs normalized using all 52 official training weeks, including validation. This branch fits transformations only through the final training week starting `2024-06-23`. The data owner must regenerate and publish a matching schema, CSV files, and split manifest before strict comparison; an explicit exploratory legacy override does not repair leakage or qualify the result as a final experiment.
-
-## Data pipeline contributions
-
-The data-pipeline ownership area delivered in this repository includes:
-
-- Raw EMBER2024 Win64 dataset setup, file inventory, schema inspection, and documentation.
-- Streaming data validation for partitions, row/label counts, data types, missing values, class balance, temporal fields, and SHA-256 duplicate detection.
-- EDA notebook and reusable EDA modules covering distributions, outliers, class comparisons, correlations, temporal patterns, and leakage review.
-- Identification of a row-duplication issue in the Kaggle copy and SHA-256 deduplication safeguards in downstream processing.
-- Leakage-aware static-feature preparation with train-only fitted transformations and a machine-readable feature schema.
-- Strict chronological train, validation, test, and reserved-production datasets with split manifests and per-split metadata for model-training handoff.
-- Local-first, reproducible documentation and an S3 artifact-handoff plan; no large dataset files are committed to Git.
-
-## Repository contents
-
-```text
-configs/       Portable data and per-account modeling configuration examples
-docs/          Data documentation, modeling design, and SageMaker runbook
-notebooks/     EDA notebook and separate model-training/evaluation notebook
-scripts/       Data preparation and notebook validation entry points
-src/           Reusable data and account-neutral modeling helpers
-sagemaker_src/ Model fitting, comparison, final evaluation, and inference contract
-tests/         Synthetic modeling and data-isolation checks
-data/raw/      Local-only EMBER2024 source JSONL files; ignored by Git
-data/processed/ Local-only prepared features and final splits; ignored by Git
-reports/       Local-only validation and EDA reports; ignored by Git
-```
-
-## Dataset scope and integrity note
-
-The local dataset is the **Win64** EMBER2024 subset only. It contains supplied weekly train and test JSONL files. The Kaggle copy contained repeated SHA-256 records, so validation, EDA sampling, feature preparation, and final split creation all explicitly deduplicate by SHA-256.
-
-The dataset's official temporal layout is 52 training weeks followed by 12 test weeks. The final project uses a documented chronological hybrid strategy rather than a random or 40/10/10/40 split:
-
-| Split | Dates | Role |
+| Deliverable | Description | Key Repository Artifacts |
 |---|---|---|
-| Train | 2023-09-24 to 2024-06-29 | Future model fitting |
-| Validation | 2024-06-30 to 2024-09-21 | Future selection/threshold work |
-| Test | 2024-09-22 to 2024-11-02 | Unseen newer-threat evaluation |
-| Reserved production | 2024-11-03 to 2024-12-14 | Final untouched newest-time evaluation |
+| **Deliverable #1: ML System Design Document** | Comprehensive technical design document covering problem framing, architecture, data engineering, feature contracts, model evaluation, deployment, monitoring, CI/CD, security/ethics, and implementation evidence. | - [`docs/ml_system_design.md`](docs/ml_system_design.md)<br/>- [`docs/AAI540_ML_System_Design_Document_Group1.docx`](docs/AAI540_ML_System_Design_Document_Group1.docx) |
+| **Deliverable #2: Video Demonstration Script & Outline** | 10–13 minute presentation script and slide outline detailing business context, architecture, live codebase walkthrough, MLOps operations, and speaker allocations. | - [`docs/video_demonstration_script_and_outline.md`](docs/video_demonstration_script_and_outline.md) |
+| **Deliverable #3: Full Codebase & Reproducible Artifacts** | Clean, modular Python codebase with passing automated unit tests, validated notebooks, feature schemas, and reports. | - [`notebooks/`](notebooks/)<br/>- [`tests/`](tests/)<br/>- [`src/`](src/) & [`sagemaker_src/`](sagemaker_src/)<br/>- [`reports/exploratory_local/`](reports/exploratory_local/) |
 
-The test and production-reserve periods derive from the supplied official test partition. Results must therefore be described as using an **official-test-derived temporal subset**, not an untouched full official EMBER2024 test evaluation. Details are in [docs/temporal_split_strategy.md](docs/temporal_split_strategy.md).
+---
 
-## Dataset for model-training teammates
+## Notebooks and Execution Workflows
 
-The model-training handoff is the following local-only directory:
+The repository organizes analysis and modeling into explicit, reproducible notebooks:
+
+### 1. `notebooks/01_ember2024_eda.ipynb`
+- **Purpose:** Exploratory Data Analysis of the EMBER2024 Win64 dataset.
+- **Contents:** Feature distribution plots, correlation heatmaps, class balance distributions, and temporal collection timelines.
+- **Status:** Validated; all visual outputs, tables, and figures are fully preserved. Expensive raw data regeneration cells default to `False`.
+- **Data Source:** Analyzes `data/processed/ember2024_reconstructed_v1/`.
+
+### 2. `notebooks/02_sagemaker_training_evaluation_local_exploratory_label_fix.ipynb`
+- **Purpose:** Local, reproducible candidate model comparison and temporal test evaluation.
+- **Methodology:**
+  - Evaluates Logistic Regression, Random Forest, and XGBoost on a stratified 100,000-record training sample.
+  - Compares candidates on the full 120,000-record validation partition (Random Forest achieved top validation PR-AUC: 0.9912).
+  - Sweeps validation probabilities to select an operating threshold ($	au = 0.790775$) enforcing a strict **False Positive Rate budget $\le 1.0\%$**.
+  - Performs a single, frozen evaluation on the held-out 59,995-record temporal test partition:
+    - **Precision:** 98.71% (299 false positives out of 29,995 benign files)
+    - **Recall:** 76.51% (22,954 true positives out of 30,000 malware files)
+    - **F1-Score:** 86.21%
+    - **ROC-AUC:** 0.9875 | **PR-AUC:** 0.9879
+- **Status:** Fully executable locally; verified and consistent with saved reports in `reports/exploratory_local/`.
+
+### 3. `notebooks/02_sagemaker_training_evaluation.ipynb`
+- **Purpose:** Guarded Amazon SageMaker production training and evaluation template.
+- **Safety Policy:** All cloud execution switches remain disabled by default (`RUN_AWS = False`, `DOWNLOAD_HANDOFF = False`, `RUN_BASELINE = False`, `RUN_COMPARISON = False`, `RUN_FINAL_TEST = False`). Zero AWS charges are incurred.
+- **Prerequisite Handling:** Explicitly detects if the authoritative regenerated handoff (`data/processed/ember2024_win64_static_v1/feature_schema.json`) is present. When absent due to raw data limits, it explicitly notifies the user and points to the local exploratory workflow.
+- **Test Compliance:** Validated against automated unit tests `tests/test_notebook_defaults.py` and `tests/test_notebook_modeling.py`.
+
+---
+
+## Dataset Scope, Provenance & Integrity Disclosures
+
+- **Target Binary Task:** Supervised classification where `0` = Benign and `1` = Malicious Windows 64-bit Portable Executables (PE).
+- **Temporal Partitions:**
+  - **Train:** 400,000 records (200k benign / 200k malicious), 2023-09-24 to 2024-06-29 (40 weeks)
+  - **Validation:** 120,000 records (60k benign / 60k malicious), 2024-06-30 to 2024-09-21 (12 weeks)
+  - **Test:** 59,995 records (29,995 benign / 30,000 malicious), 2024-09-22 to 2024-11-02 (6 weeks)
+  - **Reserved Production:** 59,998 records, 2024-11-03 to 2024-12-14 (6 weeks, held untouched)
+- **Data Provenance & Reconstruction Caveat:**
+  - Original raw EMBER2024 JSONL files (~33.5 GB) were not staged locally on this machine.
+  - Preprocessed CSV files in `data/processed/ember2024_reconstructed_v1/` were reconstructed by reversing prior standardization and refitting scaling moments **exclusively on the training partition** through week start `2024-06-23`.
+  - Missingness was estimated using a three-feature zero proxy. Results demonstrate the end-to-end MLOps pipeline and temporal methodology, but are explicitly disclosed as an exploratory approximation rather than an official raw-data benchmark.
+
+---
+
+## Local Verification and Automated Testing
+
+The repository relies on Python 3.12 and established unit tests.
+
+### 1. Run Automated Unit Tests
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover tests -v
+```
+**Outcome:** 25/25 unit tests pass cleanly:
+```text
+Ran 25 tests in 10.693s
+OK
+```
+
+### 2. Validate Notebook Abstract Syntax Trees (AST)
+```powershell
+.\.venv\Scripts\python.exe scripts\validate_notebooks.py
+```
+**Outcome:** All committed notebooks possess valid structure and compilable code cells.
+
+---
+
+## Repository Structure
 
 ```text
-data/processed/ember2024_win64_static_v1/
-+-- feature_schema.json
-+-- processing_report.json
-+-- temporal_splits_v1/
-    +-- train.csv
-    +-- validation.csv
-    +-- test.csv
-    +-- reserved_production.csv
-    +-- split_manifest.json
-    +-- metadata/
-        +-- train_metadata.json
-        +-- validation_metadata.json
-        +-- test_metadata.json
-        +-- reserved_production_metadata.json
+configs/        Configuration templates for local and SageMaker execution
+docs/           Complete ML System Design Document, Runbook, Video Script & Strategy Docs
+notebooks/      Validated EDA and model training & evaluation notebooks
+reports/        Saved local evaluation metrics, threshold sweeps, and comparison CSVs
+sagemaker_src/  Model training, evaluation, and inference contract (inference.py)
+scripts/        Reconstruction scripts, validation entry points, and notebook validators
+src/            Modular data processing, logging, temporal splitting, and validation libraries
+tests/          Automated unit tests for data isolation, schemas, and notebook execution
+data/processed/ Reconstructed temporal splits (train, validation, test, reserved_production)
 ```
 
-Use only the ordered columns in `feature_schema.json` → `model_feature_columns` as `X`. Do **not** use `record_id`, `label`, `source_partition`, `source_week_start`, or `source_week_end` as model features. `label` is the binary target; the remaining non-feature columns are lineage metadata.
+---
 
-Large raw and processed data must not be committed to Git. Share these artifacts through S3, not GitHub.
+## Remaining User-Facing Tasks Before Submission
 
-## Local setup and pipeline
-
-Run commands from the repository root (`project/`).
-
-```powershell
-python -m pip install -r requirements.txt
-```
-
-The reusable scripts use only the Python standard library. The requirements file supplies notebook visualization packages.
-
-```powershell
-# Optional only when raw data is available locally
-python scripts/run_validation.py
-python scripts/run_eda.py
-python scripts/prepare_features.py
-python scripts/create_temporal_splits.py
-```
-
-Open `notebooks/01_ember2024_eda.ipynb` in Jupyter after its required artifacts are present. The optional generation cells default to `False`; they do not rerun large raw-data jobs unless intentionally enabled.
-
-## S3 handoff for AWS Learner Lab
-
-Each member running managed model training needs an authorized session and resources in their own AWS account. The data pipeline is local-first. Do not commit credentials, access keys, bucket names containing personal information, or large data files.
-
-### 1. Configure AWS access
-
-In the AWS Learner Lab terminal or configured local terminal, confirm the active identity:
-
-```bash
-aws sts get-caller-identity
-```
-
-If the CLI is not already configured, use the Learner Lab-provided temporary credentials and region. Do not place credentials in this repository.
-
-### 2. Choose a bucket and upload only required artifacts
-
-Replace `YOUR-BUCKET-NAME` with the S3 bucket created by the AWS owner. The following uploads the model-training handoff and the reports needed to view the submitted notebook without rerunning raw-data processing:
-
-```bash
-aws s3 sync data/processed/ember2024_win64_static_v1/ \
-  s3://YOUR-BUCKET-NAME/ember2024/processed/ember2024_win64_static_v1/
-
-aws s3 sync reports/validation/ \
-  s3://YOUR-BUCKET-NAME/ember2024/reports/validation/
-
-aws s3 sync reports/eda/ \
-  s3://YOUR-BUCKET-NAME/ember2024/reports/eda/
-```
-
-This intentionally does **not** upload `data/raw/` by default. The raw Win64 JSONL data is large (~33.5 GB locally) and is only needed if someone must rerun validation, EDA sampling, or feature preparation from source.
-
-If raw-data reproducibility is required and the bucket has adequate storage, upload it separately:
-
-```bash
-aws s3 sync data/raw/ember2024/ \
-  s3://YOUR-BUCKET-NAME/ember2024/raw/ember2024/
-```
-
-### 3. Download artifacts in another environment
-
-For initial modeling, download only the schema, manifest, train, and validation files. The notebook's `download_handoff` helper performs these named downloads. The equivalent CLI filter is:
-
-```bash
-aws s3 sync s3://YOUR-BUCKET-NAME/ember2024/processed/ember2024_win64_static_v1/ \
-  data/processed/ember2024_win64_static_v1/ \
-  --exclude "*" --include "feature_schema.json" \
-  --include "temporal_splits_v1/split_manifest.json" \
-  --include "temporal_splits_v1/train.csv" --include "temporal_splits_v1/validation.csv"
-
-```
-
-The final-test stage downloads `test.csv` only after model selection is frozen. Keep `reserved_production.csv` outside the modeling environment. Optional reports for the separate EDA notebook can be downloaded with:
-
-```bash
-
-aws s3 sync s3://YOUR-BUCKET-NAME/ember2024/reports/validation/ \
-  reports/validation/
-
-aws s3 sync s3://YOUR-BUCKET-NAME/ember2024/reports/eda/ \
-  reports/eda/
-```
-
-The modeling notebook consumes prepared features without the raw dataset. The separate EDA notebook can display completed results from the optional reports; its regeneration cells require raw files.
-
-### Recommended S3 prefix layout
-
-```text
-s3://YOUR-BUCKET-NAME/ember2024/
-+-- processed/ember2024_win64_static_v1/
-+-- reports/validation/
-+-- reports/eda/
-+-- raw/ember2024/                 # Optional; large and immutable
-```
-
-Keep raw data immutable. When a later pipeline version is created, write it under a new versioned processed prefix rather than overwriting `ember2024_win64_static_v1`.
-
-## Documentation
-
-- [Dataset inventory](docs/dataset_inventory.md)
-- [Validation instructions](docs/dataset_validation.md)
-- [EDA instructions](docs/eda.md)
-- [Feature preparation](docs/feature_preparation.md)
-- [Final temporal split strategy](docs/temporal_split_strategy.md)
-
-## Modeling checks
-
-```bash
-python -m unittest discover -s tests -v
-python scripts/validate_notebooks.py
-```
-
-Tests use synthetic data and stub AWS calls. Final model quality must be measured on the actual approved data. Large datasets, account configuration, generated reports, and model files remain outside Git.
+1. **Record Video Demonstration:**
+   Using [`docs/video_demonstration_script_and_outline.md`](docs/video_demonstration_script_and_outline.md), record a 10–13 minute screencast in MP4 format divided among all three teammates (Gaurav SS, Marco Gonzalez Ortiz, Nitendra Tiwari).
+2. **Submit Group Deliverables via Canvas:**
+   One team delegate submits all three files simultaneously:
+   - Deliverable #1: `docs/AAI540_ML_System_Design_Document_Group1.docx` (or PDF export)
+   - Deliverable #2: Video file (`.mp4`) + Video Transcript / Outline (`docs/video_demonstration_script_and_outline.md`)
+   - Deliverable #3: Link to Team GitHub Codebase
+3. **Submit Individual Peer Evaluations:**
+   Each team member individually completes the Module 7 Peer Evaluation form on Canvas.

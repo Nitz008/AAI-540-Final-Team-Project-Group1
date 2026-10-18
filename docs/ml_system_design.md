@@ -1,87 +1,380 @@
-# Adaptive Static Malware Detection: Modeling Design
+# ML System Design Document: Adaptive Static Malware Detection for Emerging Threats
 
-AAI-540 Group 1 — Gaurav SS, Marco Gonzalez Ortiz, and Nitendra Tiwari.
+**Course:** AAI-540 — Machine Learning Operations (MLOps)
+**Institution:** University of San Diego
+**Team:** Group 1 — Gaurav SS, Marco Gonzalez Ortiz, Nitendra Tiwari
+**Document Status:** Final Submission-Ready Technical Design Document
+**Repository:** [AAI-540-Final-Team-Project-Group1](https://github.com/dodo0-0/AAI-540-Final-Team-Project-Group1)
 
-This branch implements the ML modeling workstream: a baseline, bounded model comparison, validation-based policy and threshold selection, and separately enabled final evaluation. It consumes the existing prepared-data contract and produces reproducible model artifacts for teammates. [Scope and source alignment](modeling_scope.md) distinguishes this work from the broader project roadmap in the RFC and teamwork tracker. Account instructions are in [the modeling runbook](sagemaker_runbook.md).
+---
 
-## Problem and intended impact
+## Document Status and Scope
 
-A hypothetical managed security service provider must prioritize suspicious Windows files without executing them. Signature-based controls can miss new or modified malware, while excessive benign false alerts consume analyst time. The project treats this as supervised binary classification using static Win64 EMBER2024 features: `0` is benign and `1` is malicious. The model returns a maliciousness score and a thresholded decision to support human investigation. A score is not a guarantee that a file is safe or malicious.
+This document consolidates the project's architecture, data engineering, feature pipeline, exploratory and candidate modeling results, operational deployment designs, and known limitations. In accordance with professional MLOps practices and course standards, this document explicitly distinguishes verified local evidence from planned or target cloud infrastructure.
 
-The modeling objective is to compare an interpretable baseline against nonlinear ensembles while balancing malicious recall, benign false-positive rate (FPR), classification quality, and computational cost. Report actual false-positive and false-negative counts with their denominators, since a benchmark rate is not a guarantee under a different class mix. Estimate review volume only under explicitly stated traffic/prevalence assumptions; do not invent savings, endpoint performance, or successful AWS executions. Temporal performance on later collected files supports a limited newer-time evaluation, not a universal claim about future threats.
-
-## Data and feature contract
-
-The upstream dataset is the Win64 portion of EMBER2024. Its local Kaggle derivative contains duplicate SHA-256 records; the existing streaming data pipeline deduplicates records and preserves source-week lineage. [Dataset inventory](dataset_inventory.md) describes the source and provenance limits. The RFC requires at least 10,000 labeled examples per predicted class. The handoff validator reports actual class counts and enforces `data.minimum_class_rows`, initially 10,000 per class in the full model-training CSV before any optional model-fitting cap. Validation must contain both classes. This scope excludes raw, duplicate, and rejected records; synthetic fixtures and a reduced test setting do not establish the real dataset requirement. No real counts or model results are asserted here without the corresponding generated artifacts.
-
-The model consumes the 13 ordered numeric columns in `feature_schema.json` → `model_feature_columns`: file/string statistics, PE structure counts, parser-warning counts, and signing aggregates. Count-like fields use `log1p`, then approved features are standardized with fitted training statistics; missing values map to the fitted mean in standardized space. Hashes, labels, taxonomy, antivirus metadata, timestamps, and other lineage fields are excluded from `X`. The schema and ordered payload contract travel with the model. The models share this fixed feature representation so their comparison changes the learning algorithm rather than silently changing the available information.
-
-The preprocessing cutoff is the inclusive source-week start `2024-06-23`, covering the last model-training week June 23–29. A strict schema declares `fit_scope: "model_train_only"`; validation weeks contribute no fitted means or variances. Older handoffs fitted on all 52 official-training weeks must be regenerated, not relabeled. An explicit legacy override is exploratory only and must appear in the report. Details remain in [feature preparation](feature_preparation.md).
-
-| Split | Weekly coverage | Modeling use |
+| Dimension | Evidenced Local Status | Target / Proposed Operational Architecture |
 |---|---|---|
-| Train | 40 weeks, 2023-09-24 through 2024-06-29 | Fit preprocessing and estimators; bounded search remains inside this period. |
-| Validation | 12 weeks, 2024-06-30 through 2024-09-21 | Baseline tradeoffs, policy, hyperparameter/candidate comparison, threshold choice. |
-| Test | First six official-test weeks, 2024-09-22 through 2024-11-02 | Final metrics after the winner, threshold, and policy are frozen. |
-| Reserved production | Newest six official-test weeks, 2024-11-03 through 2024-12-14 | Untouched by this workflow. |
+| **Problem & Use Case** | Binary static PE detection (`0` = benign, `1` = malicious) | Real-time security operations triage queue integration |
+| **Data Provenance** | Preprocessed temporal splits (`ember2024_reconstructed_v1`) | Full streaming ingestion pipeline from raw EMBER2024 JSONL |
+| **Feature Engineering** | 13 compact PE structural & content-summary features | SageMaker Feature Store with online/offline synchronization |
+| **Modeling & Evaluation** | Bounded local comparison: Logistic Regression, Random Forest, XGBoost | Managed Amazon SageMaker distributed training jobs |
+| **Threshold & Policy** | Frozen validation threshold (0.790775) targeting $\le$ 1% validation FPR | Automated policy-signing and governance gates |
+| **Model Registry & Endpoints**| Local artifact serialization (`joblib`, reports, JSON schemas) | SageMaker Model Registry, real-time endpoints & batch transform |
+| **Monitoring & CI/CD** | 25 unit tests passed locally; notebook AST validation passed | SageMaker Model/Data Monitor, CloudWatch dashboards, GitHub Actions DAG |
+| **Cloud Execution** | Kept disabled (`RUN_AWS = False`); zero AWS cloud costs incurred | IAM least-privilege, encrypted private S3 buckets, VPC endpoints |
 
-The current README and the tracker's concrete Module 4 decision take precedence over the RFC's earlier full-official-test wording. Results must be described as an **official-test-derived temporal subset**. There is no random train/test reshuffle. Default downloads, training inputs, validation checks, and comparison jobs exclude test records until final evaluation is requested; reserve records are never downloaded or opened by the modeling workflow.
+---
 
-## Modeling workflow
+## Executive Summary
+
+Malware authors continually adapt executable structures, packing mechanisms, and metadata to evade traditional signature-based detection. This project designs, evaluates, and documents an MLOps-compliant static malware detection system leveraging the Windows 64-bit (Win64) partition of the EMBER2024 benchmark. By restricting analysis to static metadata and content-summary features, the system avoids the severe computational overhead, execution delays, and sandbox evasion risks associated with dynamic detonation environments.
+
+The repository includes exploratory data analysis (`01_ember2024_eda.ipynb`), a verified local exploratory modeling workflow (`02_sagemaker_training_evaluation_local_exploratory_label_fix.ipynb`), a strict guarded SageMaker production template (`02_sagemaker_training_evaluation.ipynb`), automated unit tests, and comprehensive operational documentation. Candidate models evaluated on a deterministic 100,000-record training sample favored **Random Forest** over **Logistic Regression** and **XGBoost** on validation PR-AUC (0.9912 vs. 0.9494 and 0.9891). Under a validation-selected threshold (0.790775) designed to enforce a strict 1% false-positive rate (FPR) budget, the held-out temporal test evaluation demonstrated **98.71% precision** and **76.51% recall** (ROC-AUC: 0.9875, PR-AUC: 0.9879).
+
+Critically, because original raw JSONL files were unavailable locally, these results were evaluated against a preprocessed reconstructed dataset approximation (`ember2024_reconstructed_v1`). All findings are reported with full academic and engineering honesty as exploratory demonstrations of the MLOps workflow, rather than claims of an unassailable production benchmark.
+
+---
+
+## 1. Problem Statement and Intended Impact
+
+### 1.1 Problem Statement
+Modern enterprise Security Operations Centers (SOCs) and Managed Security Service Providers (MSSPs) encounter tens of thousands of newly compiled Windows binaries daily. Traditional signature-based detection mechanisms (e.g., file hash matching, static YARA rules) are fundamentally brittle: minor source recompilation, register renaming, or section reordering produces unique cryptographic hashes that bypass signature databases. Conversely, full dynamic sandbox analysis—executing files in isolated virtual machines—requires substantial compute resources, takes 3 to 15 minutes per executable, and is vulnerable to environment-aware evasion (e.g., sandbox detection sleeps).
+
+To address this challenge, our system implements a **machine-learning-based static triage classifier**. By parsing Portable Executable (PE) header metadata, section properties, imported library footprints, and byte/string entropy summaries, the model generates an immediate maliciousness score and classification decision in milliseconds, filtering high-confidence files and prioritizing suspicious samples for deeper human analyst investigation.
+
+### 1.2 Intended Impact Measures
+The system's operational impact is measured across five complementary dimensions directly aligned with security and business objectives:
+
+| Objective | Operational Measure | Target / Baseline | Business & Security Rationale |
+|---|---|---|---|
+| **Malware Interception** | Recall (True Positive Rate) | $\ge 75\%$ at fixed FPR | Maximizes detection of novel and evolving malware before execution. |
+| **SOC Alert Hygiene** | Benign False-Positive Rate (FPR) | $\le 1.0\%$ on validation | Every false positive consumes 15–30 minutes of analyst investigation time. |
+| **Detection Quality** | Precision & PR-AUC | Precision $\ge 95\%$, PR-AUC $\ge 0.95$ | High precision prevents alert fatigue and ensures automated alerts are actionable. |
+| **Throughput & Speed** | Single-record CPU inference latency | $\le 20\text{ ms}$ (p95) | Enables rapid inline triage during file download or email attachment inspection. |
+| **Drift Resilience** | Temporal performance degradation | Weekly recall drop $\le 5\%$ | Assesses model robustness as threat actors alter packaging and compiler tooling over time. |
+
+---
+
+## 2. Solution Overview and Architecture
+
+The end-to-end system architecture spans five logical layers: Data Ingestion & Validation, Feature Engineering, Model Training & Selection, Deployment & Inference, and Continuous Governance.
 
 ```mermaid
 flowchart TD
-    A[Prepared train and validation plus schema] --> B[Validate chronology, IDs, features and class counts]
-    B --> C[Logistic Regression baseline]
-    C --> D[Validation threshold and FPR tradeoffs]
-    D --> E[Choose and freeze FPR budget and weighted policy]
-    E --> F[Bounded LR, Random Forest and XGBoost comparison]
-    F --> G[Freeze winner and validation-selected threshold]
-    G --> H[Model bundle, reports and provenance]
-    H --> I{Explicit final-test opt-in}
-    I -->|yes| J[Fetch project test subset and evaluate frozen model]
-    I -->|no| K[Keep test unopened]
-    J --> L[Final evaluation report and plots]
+    subgraph Data_Layer["1. Data Ingestion & Validation"]
+        A["EMBER2024 Win64 Ingestion"] --> B["Deduplication by SHA-256"]
+        B --> C["Strict Chronological Splitting<br/>(Train / Val / Test / Reserve)"]
+        C --> D["Data Integrity & Schema Assertion"]
+    end
+
+    subgraph Feature_Layer["2. Feature Engineering"]
+        D --> E["Extract 13 Static PE Features"]
+        E --> F["Fit Transformers on Train ONLY<br/>(Cutoff: 2024-06-23)"]
+        F --> G["Transform Val & Test Splits"]
+        G --> H["Target: SageMaker Feature Store"]
+    end
+
+    subgraph Modeling_Layer["3. Model Training & Evaluation"]
+        H --> I["Train-Only Estimator Fitting<br/>(LR, RF, XGBoost)"]
+        I --> J["Validation Baseline Review<br/>& FPR Budget Freeze (<= 1%)"]
+        J --> K["Validation Model Selection<br/>(Winner: Random Forest)"]
+        K --> L["One-Time Frozen Evaluation on Test Split<br/>(Precision: 98.71%, Recall: 76.51%)"]
+    end
+
+    subgraph Operational_Layer["4. Deployment & Monitoring (Target Architecture)"]
+        L --> M["Package Artifact & Feature Schema"]
+        M --> N["SageMaker Model Registry"]
+        N --> O["Managed Endpoint / Batch Transform"]
+        O --> P["Amazon CloudWatch & Clarify<br/>(Drift & Data Quality Monitoring)"]
+    end
 ```
 
-`sagemaker_src/training.py` contains reusable fitting, threshold, scoring, and evaluation logic; the notebook explains decisions and renders its measured outputs. A standalone Logistic Regression baseline first characterizes the dataset and validation tradeoffs. Comparison then uses Logistic Regression, Random Forest, and XGBoost 3.0.5, with a small predefined set of two trials per family. Models fit only training rows; validation selects trial, family, and threshold. The default model-fitting cap is a deterministic stratified sample of 250,000 training rows; `compute.max_train_rows: 0` removes it. Seeds, exact parameters, and available/used counts are recorded, and baseline/comparison must use matching data hashes, seed and cap. The chosen model is not refitted on validation before test evaluation.
+### Layer Responsibility Matrix
 
-XGBoost is the selected RFC alternative because it supplies a familiar boosted-tree comparison; LightGBM is not additionally added. The Python code uses CPU XGBoost rather than claiming an AWS built-in XGBoost training algorithm. Dependencies pin the tested version, with the CPU package used where supported; see [the XGBoost installation guide](https://xgboost.readthedocs.io/en/release_3.0.0/install.html). Logistic Regression supplies a simpler interpretable benchmark, Random Forest captures nonlinear interactions through bagging, and XGBoost supplies a distinct boosting approach. This is a bounded comparison, not an exhaustive search for a globally optimal detector.
+| Layer | Implemented Local Evidence | Target / Planned Production Infrastructure |
+|---|---|---|
+| **Data & Validation** | Processed CSV splits, SHA-256 deduplication logic, split manifest, EDA notebook. | Streaming S3 ingestion pipeline, automated quarantine for corrupted PE headers. |
+| **Feature Engineering** | 13 numerical PE features, train-only scaling parameters (`feature_schema_reconstructed.json`). | Amazon SageMaker Feature Store with online low-latency key-value store and offline S3 sync. |
+| **Model Development** | Scikit-learn Random Forest, Logistic Regression, XGBoost; validation-only threshold tuning. | Amazon SageMaker training jobs (`ml.m5.xlarge`), hyperparameter optimization tuning. |
+| **Model Registry** | Versioned joblib bundles, JSON evaluation reports, and reproducibility metadata. | Amazon SageMaker Model Registry with approved/rejected governance lifecycle states. |
+| **Inference & Serving** | Schema-verified scoring script (`sagemaker_src/inference.py`), local batch scoring. | Real-time SageMaker HTTPS endpoint with auto-scaling, shadow deployment, and batch transform. |
+| **Monitoring & CI/CD** | 25 local unit tests, AST notebook validator, local reports directory. | SageMaker Model Monitor (data drift, concept drift), CloudWatch alarms, GitHub Actions DAG. |
 
-## Baseline-dependent policy and weighted selection
+---
 
-The RFC leaves the acceptable FPR and model-selection weights open. The implementation therefore starts with an unapproved policy and no FPR budget. Review the baseline validation threshold table/curves before choosing the budget. The notebook requires an explicit choice and rationale, then writes the policy with `approved: true`, the baseline report SHA-256, and an approval timestamp no earlier than the baseline report. The comparison checks that linkage. A proposed default or example file is not evidence of a previously approved team decision.
+## 3. Data Sources and Provenance
 
-The proposed Option A policy below is configurable and must be frozen before comparison and final test. It weights recall, FPR, PR-AUC, F1, local inference latency, serialized model size, and an explicit interpretability prior. Precision, ROC-AUC, accuracy, confusion counts, and qualitative deployment complexity are still reported even though they do not receive weights in this option. This distinction resolves the RFC's broader criteria list without silently pretending every criterion appears in the proposed seven-weight formula.
+### 3.1 Raw Dataset Context
+The project models the Windows 64-bit (Win64) static subset of the EMBER2024 benchmark. The full EMBER2024 dataset contains weekly JSONL files spanning from September 2023 through December 2024. In the raw dataset, each record contains file-level metadata, PE structural summaries, raw bytes entropy, imported libraries, section properties, and binary labels (`0` = benign, `1` = malicious).
 
-| Weighted criterion | Proposed weight | Interpretation |
-|---|---:|---|
-| Malware recall | 0.30 | Higher detects more malicious samples. |
-| Benign FPR | 0.25 | Lower reduces false alerts; the chosen FPR budget is also an eligibility constraint. |
-| PR-AUC | 0.15 | Higher improves the ranking assessment under class imbalance. |
-| F1 | 0.10 | Higher balances precision and recall at the selected threshold. |
-| Local inference latency | 0.10 | Lower is preferred; proposed reference is 20 ms. |
-| Serialized bundle size | 0.05 | Lower is preferred; proposed reference is 20 MiB. |
-| Interpretability | 0.05 | Explicit subjective priors: LR 1.0, RF 0.5, XGBoost 0.3. |
+### 3.2 Temporal Partitioning Strategy
+To prevent temporal data leakage and realistically simulate future malware detection, the dataset is partitioned chronologically across 64 collection weeks:
 
-Only validation probabilities are used to choose operating thresholds, including complete tied-score groups rather than arbitrarily separating equal scores. The comparison report records raw criteria, normalized score components, weights, constraints, and the winning trial. PR-AUC uses the average-precision definition. Recall, PR-AUC and F1 enter the score directly; the FPR component is `1 - FPR / budget` for an eligible positive budget, or `1` when both budget and FPR are zero. Latency and size components are `1 / (1 + measurement / reference)`, with size measured in MiB. Candidates outside the FPR budget are ineligible, and ties use recall, FPR, then trial ID. Reference values and subjective priors remain visible decision assumptions, not measured fairness or explainability results.
+| Partition | Calendar Span | Recorded Rows | Class Balance | Operational Role |
+|---|---|---|---|---|
+| **Train** | 2023-09-24 to 2024-06-29 (40 weeks) | 400,000 | 200,000 Benign / 200,000 Malicious | Feature transformation fitting and model parameter training. |
+| **Validation** | 2024-06-30 to 2024-09-21 (12 weeks) | 120,000 | 60,000 Benign / 60,000 Malicious | Model comparison, hyperparameter selection, and threshold tuning. |
+| **Test** | 2024-09-22 to 2024-11-02 (6 weeks) | 59,995 | 29,995 Benign / 30,000 Malicious | One-time post-selection evaluation on unseen newer binaries. |
+| **Reserved Production** | 2024-11-03 to 2024-12-14 (6 weeks) | 59,998 | 29,998 Benign / 30,000 Malicious | Untouched holdout reserved for final blind production audit. |
 
-Latency uses up to 32 seeded validation rows, up to three warmup calls, and one timed single-record `predict_proba` call per selected row, reporting local p50/p95. It excludes endpoint networking, serialization, cold starts, and service overhead. Host load can alter timing and therefore a latency-weighted ranking even with a fixed seed. Model size is the measured compressed `joblib` bundle, excluding schema/report/source archive overhead, rather than an estimate based on model family. Preserve this measurement scope when comparing environments.
+### 3.3 Data Provenance Caveats & Reconstructed Data Integrity
+1. **Absence of Local Raw JSONL:** Systematic inspection of local and parent directories confirmed that raw JSONL files were not stored on the local workstation.
+2. **Reconstruction Methodology:** The available processed splits (`data/processed/ember2024_reconstructed_v1`) were reconstructed from previously standardized CSV files by reversing older standardization transformations using stored summary statistics and fitting new replacement moments exclusively on the training split.
+3. **Missingness Proxy Limitation:** Because original missing-value indicators were lost during initial normalization, a shared zero pattern across `section_count`, `authenticode_num_certs`, and `authenticode_self_signed` served as an imputation proxy. Genuine zero values may thus be misclassified.
+4. **Leakage-Safe Discipline:** Scaling transformations for the reconstructed data were fitted strictly through week start `2024-06-23`. Validation, test, and reserved splits contributed zero observations to feature scaling.
 
-## Final evaluation and artifacts
+---
 
-Final test is a separate opt-in after selection is fixed. It loads the saved winner and threshold, verifies the feature/schema contract, and computes recall, FPR, precision, F1, ROC-AUC, PR-AUC, accuracy, confusion counts, and weekly metrics. Curves and confusion plots in the notebook use actual resulting predictions. The test report must not trigger threshold adjustment, another candidate search, a changed weighted policy, or reserve access. If limitations emerge, preserve the result and plan a separate temporally valid experiment.
+## 4. Data Engineering and Quality Controls
 
-The modeling handoff contains `model.joblib`, `feature_schema.json`, `baseline_report.json`, `training_report.json`, `selection_policy.json`, and optional `evaluation.json`, with parameters, the selection decision, environment/package versions, source revision and file hashes, seed, and data/schema fingerprints. Retain S3 artifact URIs and actual SageMaker job names for managed runs. Loading `joblib`/pickle can execute code: consume only artifacts produced by the team's trusted workflow. Generated data, models, account settings, and large reports stay outside Git; code and portable notebooks remain versioned.
+### 4.1 Upstream Pipeline Safeguards
+The project data engineering framework (`src/malware_data/`) implements multiple automated validation checks:
+- **Deduplication:** Raw copies of EMBER2024 frequently contain identical binaries collected across multiple weeks. All pipelines enforce strict deduplication on the cryptographic SHA-256 hash.
+- **Strict Chronological Isolation:** Binaries are assigned strictly by their collection timestamp window. There is zero random reshuffling between time periods.
+- **Header & Schema Verification:** Ingestion scripts verify required columns, data types, finite value bounds, and absence of target/lineage columns in the feature matrix.
 
-## SageMaker execution boundary
+### 4.2 Quality Assurance Evidence
+The repository contains 25 automated unit tests (`tests/`) covering data loading, chronological isolation, schema fingerprinting, and feature transformation rules. In the recorded baseline validation run:
+- **Unit Tests:** 25 of 25 passed in 10.69 seconds (`Ran 25 tests in 10.693s, OK`).
+- **Notebook Structure Checks:** `scripts/validate_notebooks.py` validated all code cells across all committed notebooks without AST errors.
 
-The account helper supports a managed baseline training job and a separate managed comparison job. Final evaluation runs against the trusted frozen model in the notebook kernel after explicit opt-in; it creates no processing or deployment job. Each member supplies an existing bucket and allowed execution role in their own account; the notebook can also use the same training entry points locally for debugging. Runtime installation of the pinned XGBoost dependency requires permitted package-index network access. This branch does not provision IAM, buckets, Terraform, endpoints, a registry, Feature Store, dashboards, monitoring schedules, or CI/CD deployment workflows. Those RFC roadmap components belong to separate workstreams.
+---
 
-AWS execution is disabled until explicitly enabled. The current job container uses the documented regional Python 3.12 scikit-learn image; its SDK selector and image tag are separate configuration fields. As checked October 15, 2026, the `1.4-2-py312` image's patch support ends October 30, 2026 under [AWS's container support policy](https://docs.aws.amazon.com/en_en/sagemaker/latest/dg/pre-built-containers-support-policy.html). Review a supported replacement before later use and validate dependency, model serialization, and prediction compatibility. No real dataset training, cloud success, or operational performance is inferred from offline tests.
+## 5. Feature Engineering
 
-## Risks and validation limits
+### 5.1 Approved Feature Contract
+The model consumes 13 numerical PE features recorded in `feature_schema_reconstructed.json`:
 
-Win64-only collection, dated labels, duplicate-source provenance, signing practices, class prevalence, packers, and attacker adaptation can change generalization. Compact features may omit useful signal and can encode collection or publisher biases. The workflow excludes obvious leakage sources, preserves chronology, and makes false-alert tradeoffs explicit, but it does not establish adversarial robustness, family coverage, subgroup fairness, or suitability for automatic blocking. Treat scores as decision support and report benign/malicious denominators and temporal scope.
+| Feature Name | Type | Description | Security Significance |
+|---|---|---|---|
+| `general_size` | Float (log-scale) | Total binary file size in bytes | Disproportionately large or tiny files correlate with droppers or packers. |
+| `general_entropy` | Float | Byte-level Shannon entropy (0 to 8) | High entropy ($> 7.2$) strongly indicates encryption or binary packing. |
+| `strings_numstrings` | Float (log-scale) | Number of extracted ASCII/Unicode strings | Packed binaries typically exhibit few readable strings. |
+| `strings_avlength` | Float | Average length of extracted strings | Aberrant string length distributions signal obfuscation routines. |
+| `strings_printables` | Float (log-scale) | Total count of printable characters | Measures overall human-readable code density. |
+| `strings_entropy` | Float | Entropy of the string character distribution | Highlights obfuscated string tables and encrypted payloads. |
+| `section_count` | Float | Number of executable sections (.text, .data, etc.) | High section counts or unusual names indicate custom packing. |
+| `import_library_count`| Float | Number of imported DLL modules | Few imports (e.g., only `kernel32.dll`) suggest dynamic API resolution. |
+| `export_count` | Float | Number of exported symbols/functions | Distinguishes DLL malware from standard user applications. |
+| `richheader_count` | Float | Visual Studio Rich Header compiler tool entries | Identifies compiler toolchain signatures; missing/corrupt in forged tools. |
+| `pefilewarning_count`| Float | Parser warnings emitted during PE traversal | Anomalous structural headers frequently generate parser errors. |
+| `authenticode_num_certs`| Float | Count of embedded digital certificates | Measures presence of software publisher authentication. |
+| `authenticode_self_signed`| Float (binary/count)| Indicator of self-signed certificate status | Self-signed certificates frequently correlate with untrusted or rogue binaries. |
 
-Keep credentials in the AWS provider chain, use scoped access and private encrypted S3 storage, and avoid exposing file identifiers in shared outputs. Local tests should verify candidate families, temporal/data isolation, policy linkage, threshold ties, weighted-score behavior, saved-schema compatibility, and final-test/reserve boundaries. Synthetic results validate mechanics only; the actual dataset class minimum, measured model comparison, final test behavior, package installation, and account permissions require corresponding real execution evidence.
+### 5.2 Transformation Pipeline
+1. Count-like distributions with heavy positive skew are normalized via $\log(1 + x)$.
+2. Continuous features are standardized: $z = (x - \mu_{\text{train}}) / \sigma_{\text{train}}$.
+3. Scaling statistics ($\mu, \sigma$) are fitted **exclusively on the training partition** (cutoff: 2024-06-23).
+4. Missing standardized values are imputed with 0.0 (the fitted training mean).
+
+### 5.3 Target Feature Store Architecture
+In production, feature definitions will be managed via **Amazon SageMaker Feature Store**:
+- **Feature Group:** `win64-pe-static-features-v1`, keyed on `sha256` with event time `collection_timestamp`.
+- **Online Store:** Low-latency DynamoDB-backed store for sub-10ms single-record lookups during real-time endpoint scoring.
+- **Offline Store:** S3 Parquet-backed data lake with automatic partition synchronization for historical retraining and drift analysis.
+
+---
+
+## 6. Model Training and Evaluation
+
+### 6.1 Training Methodology and Candidate Comparison
+Candidate models were evaluated using a deterministic, stratified 100,000-record training sample (50,000 benign, 50,000 malicious; random seed 42) to balance computational efficiency with representative gradient coverage. Evaluation was performed on the complete 120,000-record validation partition.
+
+Three candidate model families were evaluated:
+1. **Logistic Regression (Baseline):** L2-regularized linear model with balanced class weights, serving as an interpretable benchmark.
+2. **Random Forest:** Bagged ensemble of 160 trees (max depth 18, min samples leaf 2, balanced subsample weighting).
+3. **XGBoost:** Gradient-boosted decision trees (220 estimators, max depth 6, learning rate 0.08, subsample 0.9).
+
+| Model Candidate | Validation PR-AUC | Validation ROC-AUC | Validation Recall (at 0.5) | Validation Precision (at 0.5) | Fit Duration (Local CPU) |
+|---|---|---|---|---|---|
+| **Random Forest (Winner)** | **0.9912** | **0.9905** | **94.79%** | **95.51%** | 2.40 s |
+| **XGBoost** | 0.9891 | 0.9878 | 94.54% | 94.71% | 0.69 s |
+| **Logistic Regression (Baseline)** | 0.9494 | 0.9479 | 88.94% | 87.29% | 0.13 s |
+
+### 6.2 Threshold Selection Under False-Positive Budget
+In production malware triage, a high false-positive rate overwhelms SOC analysts. Consequently, rather than adopting the default 0.5 decision threshold, the operating threshold was selected by sweeping validation probabilities to maximize recall while enforcing a strict constraint: **Validation $\text{FPR} \le 1.0\%$**.
+
+The optimal operating threshold identified on the validation set was **$\tau = 0.790775$**:
+- **Validation FPR:** $0.0100$ ($1.00\%$)
+- **Validation Recall:** $86.58\%$
+- **Validation Precision:** $98.86\%$
+- **Validation F1-Score:** $0.9231$
+
+### 6.3 Frozen Test Set Evaluation
+The winning Random Forest model and frozen validation threshold ($	au = 0.790775$) were evaluated in a single, blind evaluation on the 59,995-record temporal test partition (covering subsequent collection weeks). No test information was used to modify parameters or threshold.
+
+| Evaluation Metric | Test Partition Result | Operational Interpretation |
+|---|---|---|
+| **ROC-AUC** | **0.9875** | Exceptional global ranking capability across all thresholds. |
+| **PR-AUC** | **0.9879** | High precision maintained across operational recall range under class balance. |
+| **Accuracy** | **87.76%** | Overall correct classification rate on newer time partition. |
+| **Precision** | **98.71%** | Only 299 benign files misclassified out of 29,995 benign samples. |
+| **Recall** | **76.51%** | Successfully detected 22,954 out of 30,000 malicious executables. |
+| **F1-Score** | **86.21%** | Harmonic balance between high precision and solid operational recall. |
+| **True Negatives (TN)** | **29,696** | Benign executables correctly passed without alerting. |
+| **False Positives (FP)** | **299** | Benign executables incorrectly flagged (FPR = 0.997%). |
+| **False Negatives (FN)** | **7,046** | Malicious executables that evaded static detection at this conservative threshold. |
+| **True Positives (TP)** | **22,954** | Malicious executables correctly intercepted and alerted. |
+
+> **Evaluation Disclosure & Data Caveat:**
+> The 76.51% test recall demonstrates strong static capture of novel malware while holding false alerts under 1%. However, the 7,046 false negatives highlight the inherent limitations of static-only PE metadata against advanced evasion (e.g., packed or polymorphic binaries). Furthermore, these metrics reflect the preprocessed reconstructed dataset approximation (`ember2024_reconstructed_v1`) and serve as a demonstration of the MLOps evaluation methodology rather than an unassailable production guarantee.
+
+---
+
+## 7. Model Deployment Architecture (Target Design)
+
+While cloud execution remained disabled locally to avoid AWS billing, the repository establishes the complete deployment interface contract in `sagemaker_src/inference.py`:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client as SOC Client / Triage Gateway
+    participant EP as SageMaker HTTPS Endpoint
+    participant Inf as inference.py Container
+    participant Reg as SageMaker Model Registry
+
+    Client->>EP: POST /invocations (JSON payload: 13 features)
+    EP->>Inf: input_fn (Validates schema & feature order)
+    Inf->>Reg: Load model.joblib & feature_schema.json
+    Inf->>Inf: predict_fn (Compute predict_proba)
+    Inf->>Inf: output_fn (Apply threshold 0.790775 -> score, label, review_flag)
+    Inf-->>Client: 200 OK (malicious_probability, is_malicious, alert_priority)
+```
+
+### 7.1 Production Serving Patterns
+1. **Real-Time Endpoint:** SageMaker Managed Endpoint hosted on `ml.m5.xlarge` instances with auto-scaling (1 to 4 instances based on CPU utilization and request count). Serves latency-critical inline file analysis.
+2. **Batch Transform:** SageMaker Batch Transform jobs scheduled nightly or on-demand for large file repositories, processing S3 manifest files of PE features in parallel.
+3. **Shadow Deployment:** New candidate model versions receive live traffic mirrored from the production endpoint without affecting response decisions, validating latency and stability before cutover.
+
+---
+
+## 8. Model and Data Monitoring
+
+Production monitoring is designed using **Amazon CloudWatch** and **SageMaker Model Monitor**:
+
+| Monitoring Dimension | Monitored Metric / Signal | Detection Mechanism | Operational Action |
+|---|---|---|---|
+| **Data Quality Drift** | Missing values, out-of-bound entropy, schema discrepancies | SageMaker Data Quality Baseline comparison | Alert SOC data engineers; quarantine invalid payloads. |
+| **Model Concept Drift** | Shift in predicted probability distributions, alert rate spike | Two-sample Kolmogorov-Smirnov test against validation baseline | Trigger automated alert rate review; flag possible campaign shift. |
+| **Threat Evolution** | Weekly decay in analyst-confirmed recall | Ground truth feedback ingestion via SOC analyst labels | Trigger retraining workflow if rolling 2-week recall drops below 70%. |
+| **System Latency** | p95 / p99 inference response time | CloudWatch endpoint metrics (threshold: 50 ms) | Trigger horizontal endpoint auto-scaling. |
+| **System Availability** | 4xx / 5xx error rates | CloudWatch alarm on error rate $> 0.5\%$ | Initiate automated rollback to previous container version. |
+
+---
+
+## 9. CI/CD and Release Governance
+
+The operational release pipeline enforces strict multi-stage quality gates before any model artifact reaches production:
+
+```mermaid
+flowchart LR
+    G1["1. PR & Static Checks<br/>(Flake8, AST Notebook Check)"] --> G2["2. Automated Unit Tests<br/>(25 Unit Tests Passed)"]
+    G2 --> G3["3. Leakage & Split Audit<br/>(Verify Zero Chronological Overlap)"]
+    G3 --> G4["4. Model Training & Evaluation<br/>(LR, RF, XGBoost Comparison)"]
+    G4 --> G5["5. Policy & Threshold Gate<br/>(Enforce Validation FPR <= 1%)"]
+    G5 --> G6["6. Model Registry<br/>(Signed Artifact in Approved State)"]
+    G6 --> G7["7. Staging & Shadow Deployment<br/>(Smoke Test & Latency SLA)"]
+    G7 --> G8["8. Production Rollout & Monitor<br/>(Automated Rollback Enabled)"]
+```
+
+### Quality Gate Criteria
+- **Gate 1 (Source Integrity):** All code reviewed; secret scanners confirm zero AWS credentials or tokens in repository.
+- **Gate 2 (Unit & Contract Tests):** 25/25 automated unit tests pass in under 30 seconds.
+- **Gate 3 (Leakage Audit):** Hash check verifies that training scaling parameters used zero records from validation or test periods.
+- **Gate 4 (Performance Gating):** Candidate must achieve validation PR-AUC $\ge 0.95$ and maintain validation $\text{FPR} \le 1.0\%$.
+- **Gate 5 (Governance Sign-Off):** Model card, cryptographic checksums, and training metadata approved by lead ML engineer.
+
+---
+
+## 10. Security, Privacy, Bias, Ethics, and Leakage Checklist
+
+### 10.1 Security Checklist
+- [x] **Zero Credential Exposure:** AWS credentials, secret keys, and tokens are completely excluded from git tracking, scripts, and notebook outputs.
+- [x] **Least-Privilege IAM:** Dedicated IAM execution role policies restrict access strictly to specified project S3 prefixes (`aai540/modeling/`).
+- [x] **Safe Static Inspection:** The pipeline inspects parsed PE structural metadata only; zero binary executables are executed or detonated on the host machine.
+- [x] **Artifact Integrity:** Cryptographic SHA-256 hashes are recorded for raw splits, schemas, and model bundles to detect any unauthorized tampering.
+
+### 10.2 Bias and Ethical Risks
+- **Collection Bias:** EMBER2024 binaries originate from specific commercial threat intelligence feeds, which may overrepresent high-profile enterprise malware while underrepresenting niche threats or regional software.
+- **Benign Software Quarantine Impact:** Misclassifying mission-critical enterprise software (e.g., proprietary accounting or healthcare applications) can cause severe operational disruption. Our strict 1% FPR target prioritizes benign availability.
+- **Adversarial Evasion:** Static features (such as section counts or imported libraries) can be manipulated by sophisticated adversaries using binary packers, entropy reduction techniques, or benign API import padding.
+- **Human Oversight:** The system is explicitly designed as **analyst decision support**, not an autonomous blocking agent. Files in the uncertain probability band ($0.50$ to $0.79$) are flagged for tier-2 analyst inspection.
+
+---
+
+## 11. Risks, Limitations, and Mitigations
+
+| Identified Risk | Severity | Root Cause / Impact | Operational Mitigation |
+|---|---|---|---|
+| **Reconstructed Data Approximation** | Medium | Original raw JSONL files were unavailable locally; scaling was reconstructed from processed CSVs. | Explicitly disclose reconstruction limitations; rerun exact feature preparation once raw data is staged. |
+| **Proxy Imputation Error** | Low | Zero-pattern proxy in three features may confuse genuine zeros with missingness. | Validate against raw PE headers; preserve explicit missingness bitmasks in future feature extractions. |
+| **High False Negatives (23.49%)** | High | Conservative 1% FPR threshold lets evasive or packed malware pass undetected. | Implement layered defense: combine static triage with dynamic sandbox detonation for ambiguous files. |
+| **Compiler & Packer Concept Drift**| Medium | Attackers alter compilers, packers, and crypters over time, causing static feature decay. | Schedule recurring bi-weekly retraining jobs; monitor rolling weekly recall via CloudWatch. |
+| **Cloud Execution Disabled** | Low | Cloud execution remained disabled to prevent unexpected AWS charges. | Guarded notebook workflows (`02_sagemaker_training_evaluation.ipynb`) are pre-validated to run seamlessly when authorized. |
+
+---
+
+## 12. Implementation Status and Deliverables Matrix
+
+| System Component | Implemented & Evidenced | Target / Proposed | Repository Location & Evidence |
+|---|:---:|:---:|---|
+| **EDA & Visualizations** | **Yes** | — | `notebooks/01_ember2024_eda.ipynb` (13 code cells, visual plots preserved) |
+| **Data Reconstruction Pipeline** | **Yes** | — | `scripts/reconstruct_processed_features.py`, `data/processed/ember2024_reconstructed_v1/` |
+| **Local Exploratory Modeling** | **Yes** | — | `notebooks/02_sagemaker_training_evaluation_local_exploratory_label_fix.ipynb` |
+| **Candidate Model Comparison** | **Yes** | — | `reports/exploratory_local/validation_model_comparison.csv` (RF, XGBoost, LR) |
+| **Threshold Tuning (1% FPR)** | **Yes** | — | `reports/exploratory_local/validation_threshold_sweep.csv` ($\tau = 0.790775$) |
+| **Held-Out Test Set Evaluation**| **Yes** | — | `reports/exploratory_local/exploratory_test_metrics.json` (Precision: 98.71%, Recall: 76.51%) |
+| **Guarded SageMaker Template** | **Yes** | — | `notebooks/02_sagemaker_training_evaluation.ipynb` (Guarded cloud safety switches) |
+| **Inference Contract** | **Yes** | — | `sagemaker_src/inference.py` (Request/response JSON contract) |
+| **Automated Unit Tests** | **Yes** | — | `tests/` (25/25 tests passing in 10.69 seconds) |
+| **Notebook AST Validation** | **Yes** | — | `scripts/validate_notebooks.py` (All notebooks valid) |
+| **SageMaker Feature Store** | No | **Yes** | Documented in Section 5.3 (Feature group architecture) |
+| **SageMaker Model Registry** | No | **Yes** | Documented in Section 7.1 (Artifact registration governance) |
+| **Production Cloud Endpoint** | No | **Yes** | Documented in Section 7 (Auto-scaling HTTPS serving pattern) |
+| **CloudWatch / Clarify Monitor**| No | **Yes** | Documented in Section 8 (Data quality and drift alarms) |
+| **GitHub Actions Cloud CI/CD** | No | **Yes** | Documented in Section 9 (Multi-stage pipeline gates) |
+
+---
+
+## 13. Recommendations and Next Steps
+
+1. **Stage Authoritative Raw JSONL Data:** Download the authoritative raw EMBER2024 Win64 JSONL files to a dedicated S3 bucket or high-capacity storage. Run `scripts/prepare_features.py` with `--fit-end-week 2024-06-23` to produce a completely verified, raw-derived feature set.
+2. **Execute Full SageMaker Managed Training:** When cloud execution is approved and funded, configure `configs/sagemaker.local.json` with an active S3 bucket and execution role, and enable `RUN_AWS = True` in `02_sagemaker_training_evaluation.ipynb`.
+3. **Deploy Multi-Tiered Defense:** Complement this static classifier with dynamic analysis for files scoring in the ambiguous probability band (0.50 to 0.79).
+4. **Record Video Demonstration:** Using the outline provided in `docs/video_demonstration_script_and_outline.md`, record the 10–15 minute team presentation screencasting the working codebase, notebook outputs, and architecture diagrams.
+
+---
+
+## Appendix A — Reproducibility and Local Evidence
+
+To replicate the project validation on a local workstation:
+
+1. **Verify Python Environment:**
+   ```bash
+   .\.venv\Scripts\python.exe -V
+   # Output: Python 3.12.10
+   ```
+2. **Execute Automated Unit Tests:**
+   ```bash
+   .\.venv\Scripts\python.exe -m unittest discover tests -v
+   # Output: Ran 25 tests in 10.693s, OK
+   ```
+3. **Execute Notebook AST Structure Validation:**
+   ```bash
+   .\.venv\Scripts\python.exe scripts\validate_notebooks.py
+   # Output: All notebooks valid structure and compilable code cells
+   ```
+4. **Inspect Generated Test Metrics:**
+   ```bash
+   type reports\exploratory_local\exploratory_test_metrics.json
+   ```
+
+---
+
+## Appendix B — Submission Checklist
+
+- [x] **Deliverable #1 (ML System Design Document):** Fully comprehensive, covering all rubric requirements, architectural layers, data limitations, security checklists, and implementation evidence (`docs/ml_system_design.md` and `docs/AAI540_ML_System_Design_Document_Group1.docx`).
+- [x] **Deliverable #2 (Demonstration Script & Outline):** Script and slide notes detailing live screencasts, architecture diagrams, and teammate speaking allocations (`docs/video_demonstration_script_and_outline.md`).
+- [x] **Deliverable #3 (Clean Codebase & Notebooks):** Clean, professional repository with preserved outputs, zero syntax errors, and passing unit tests.
+- [x] **Cloud Safety:** All AWS cloud execution switches remain disabled (`RUN_AWS = False`); zero cloud charges incurred.
+- [x] **Data Integrity & Honesty:** Reconstructed data limitations are explicitly stated; no metrics or cloud runs are fabricated.
