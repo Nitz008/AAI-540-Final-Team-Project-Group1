@@ -12,16 +12,16 @@
 
 This document consolidates the project's architecture, data engineering, feature pipeline, exploratory and candidate modeling results, operational deployment designs, and known limitations. In accordance with professional MLOps practices and course standards, this document explicitly distinguishes verified local evidence from planned or target cloud infrastructure.
 
-| Dimension | Evidenced Local Status | Target / Proposed Operational Architecture |
+| Dimension | Evidenced Status | Target / Proposed Operational Architecture |
 |---|---|---|
 | **Problem & Use Case** | Binary static PE detection (`0` = benign, `1` = malicious) | Real-time security operations triage queue integration |
-| **Data Provenance** | Preprocessed temporal splits (`ember2024_reconstructed_v1`) | Full streaming ingestion pipeline from raw EMBER2024 JSONL |
+| **Data Provenance** | Reconstructed temporal splits (`ember2024_reconstructed_v1`) | Full streaming ingestion pipeline from raw EMBER2024 JSONL |
 | **Feature Engineering** | 13 compact PE structural & content-summary features | SageMaker Feature Store with online/offline synchronization |
-| **Modeling & Evaluation** | Bounded local comparison: Logistic Regression, Random Forest, XGBoost | Managed Amazon SageMaker distributed training jobs |
+| **Modeling & Evaluation** | Local candidate comparison (RF winner) & SageMaker baseline LR job | Managed Amazon SageMaker distributed training & HPO jobs |
 | **Threshold & Policy** | Frozen validation threshold (0.790775) targeting $\le$ 1% validation FPR | Automated policy-signing and governance gates |
 | **Model Registry & Endpoints**| Local artifact serialization (`joblib`, reports, JSON schemas) | SageMaker Model Registry, real-time endpoints & batch transform |
 | **Monitoring & CI/CD** | 25 unit tests passed locally; notebook AST validation passed | SageMaker Model/Data Monitor, CloudWatch dashboards, GitHub Actions DAG |
-| **Cloud Execution** | Kept disabled (`RUN_AWS = False`); zero AWS cloud costs incurred | IAM least-privilege, encrypted private S3 buckets, VPC endpoints |
+| **Cloud Execution** | SageMaker baseline completed; guarded notebooks default `RUN_AWS = False` | IAM least-privilege, encrypted private S3 buckets, VPC endpoints |
 
 ---
 
@@ -29,9 +29,11 @@ This document consolidates the project's architecture, data engineering, feature
 
 Malware authors continually adapt executable structures, packing mechanisms, and metadata to evade traditional signature-based detection. This project designs, evaluates, and documents an MLOps-compliant static malware detection system leveraging the Windows 64-bit (Win64) partition of the EMBER2024 benchmark. By restricting analysis to static metadata and content-summary features, the system avoids the severe computational overhead, execution delays, and sandbox evasion risks associated with dynamic detonation environments.
 
-The repository includes exploratory data analysis (`01_ember2024_eda.ipynb`), a verified local exploratory modeling workflow (`02_sagemaker_training_evaluation_local_exploratory_label_fix.ipynb`), a strict guarded SageMaker production template (`02_sagemaker_training_evaluation.ipynb`), automated unit tests, and comprehensive operational documentation. Candidate models evaluated on a deterministic 100,000-record training sample favored **Random Forest** over **Logistic Regression** and **XGBoost** on validation PR-AUC (0.9912 vs. 0.9494 and 0.9891). Under a validation-selected threshold (0.790775) designed to enforce a strict 1% false-positive rate (FPR) budget, the held-out temporal test evaluation demonstrated **98.71% precision** and **76.51% recall** (ROC-AUC: 0.9875, PR-AUC: 0.9879).
+The repository includes exploratory data analysis (`01_ember2024_eda.ipynb`), a verified local exploratory modeling workflow (`02_sagemaker_training_evaluation_local_exploratory_label_fix.ipynb`), a guarded SageMaker production template (`02_sagemaker_training_evaluation.ipynb`), automated unit tests, and comprehensive operational documentation. Two distinct sets of exploratory experimental evaluations were conducted:
+1. **Local Candidate Comparison (Notebook Random Forest):** Evaluated on a deterministic 100,000-record training sample from the reconstructed data. Random Forest achieved top validation PR-AUC (0.9912 vs. 0.9494 for Logistic Regression and 0.9891 for XGBoost). Under a validation-selected threshold (0.790775) enforcing a strict $\le 1.0\%$ validation false-positive rate budget, the held-out temporal test evaluation demonstrated **98.71% precision** and **76.51% recall** (F1-score: 86.21%, ROC-AUC: 0.9875, PR-AUC: 0.9879).
+2. **Managed SageMaker Baseline (Logistic Regression):** A separate baseline training job completed on Amazon SageMaker under an explicit exploratory legacy-preprocessing configuration, achieving validation ROC-AUC of 0.9450, PR-AUC of 0.9442, recall of 89.02%, precision of 87.06%, and FPR of 13.23% at threshold 0.5.
 
-Critically, because original raw JSONL files were unavailable locally, these results were evaluated against a preprocessed reconstructed dataset approximation (`ember2024_reconstructed_v1`). All findings are reported with full academic and engineering honesty as exploratory demonstrations of the MLOps workflow, rather than claims of an unassailable production benchmark.
+Because original raw JSONL files were unavailable in the local workspace, these results were evaluated against preprocessed reconstructed dataset approximations. All findings are reported with full academic and engineering honesty as exploratory demonstrations of the MLOps workflow, rather than claims of an exact raw-data regeneration or a fully verified production benchmark.
 
 ---
 
@@ -69,7 +71,7 @@ flowchart TD
 
     subgraph Feature_Layer["2. Feature Engineering"]
         D --> E["Extract 13 Static PE Features"]
-        E --> F["Fit Transformers on Train ONLY<br/>(Cutoff: 2024-06-23)"]
+        E --> F["Fit Scaling on Train Split<br/>(Source Weeks Through 2024-06-23)"]
         F --> G["Transform Val & Test Splits"]
         G --> H["Target: SageMaker Feature Store"]
     end
@@ -91,10 +93,10 @@ flowchart TD
 
 ### Layer Responsibility Matrix
 
-| Layer | Implemented Local Evidence | Target / Planned Production Infrastructure |
+| Layer | Implemented Evidence | Target / Planned Production Infrastructure |
 |---|---|---|
 | **Data & Validation** | Processed CSV splits, SHA-256 deduplication logic, split manifest, EDA notebook. | Streaming S3 ingestion pipeline, automated quarantine for corrupted PE headers. |
-| **Feature Engineering** | 13 numerical PE features, train-only scaling parameters (`feature_schema_reconstructed.json`). | Amazon SageMaker Feature Store with online low-latency key-value store and offline S3 sync. |
+| **Feature Engineering** | 13 numerical PE features, replacement scaling parameters (`feature_schema_reconstructed.json`). | Amazon SageMaker Feature Store with online low-latency key-value store and offline S3 sync. |
 | **Model Development** | Scikit-learn Random Forest, Logistic Regression, XGBoost; validation-only threshold tuning. | Amazon SageMaker training jobs (`ml.m5.xlarge`), hyperparameter optimization tuning. |
 | **Model Registry** | Versioned joblib bundles, JSON evaluation reports, and reproducibility metadata. | Amazon SageMaker Model Registry with approved/rejected governance lifecycle states. |
 | **Inference & Serving** | Schema-verified scoring script (`sagemaker_src/inference.py`), local batch scoring. | Real-time SageMaker HTTPS endpoint with auto-scaling, shadow deployment, and batch transform. |
@@ -108,20 +110,21 @@ flowchart TD
 The project models the Windows 64-bit (Win64) static subset of the EMBER2024 benchmark. The full EMBER2024 dataset contains weekly JSONL files spanning from September 2023 through December 2024. In the raw dataset, each record contains file-level metadata, PE structural summaries, raw bytes entropy, imported libraries, section properties, and binary labels (`0` = benign, `1` = malicious).
 
 ### 3.2 Temporal Partitioning Strategy
-To prevent temporal data leakage and realistically simulate future malware detection, the dataset is partitioned chronologically across 64 collection weeks:
+To maintain chronological separation and realistically simulate future malware detection, the dataset is partitioned chronologically across 64 collection weeks:
 
-| Partition | Calendar Span | Recorded Rows | Class Balance | Operational Role |
+| Partition | Source Weeks | Row Count | Class Balance | Operational Role |
 |---|---|---|---|---|
-| **Train** | 2023-09-24 to 2024-06-29 (40 weeks) | 400,000 | 200,000 Benign / 200,000 Malicious | Feature transformation fitting and model parameter training. |
-| **Validation** | 2024-06-30 to 2024-09-21 (12 weeks) | 120,000 | 60,000 Benign / 60,000 Malicious | Model comparison, hyperparameter selection, and threshold tuning. |
-| **Test** | 2024-09-22 to 2024-11-02 (6 weeks) | 59,995 | 29,995 Benign / 30,000 Malicious | One-time post-selection evaluation on unseen newer binaries. |
-| **Reserved Production** | 2024-11-03 to 2024-12-14 (6 weeks) | 59,998 | 29,998 Benign / 30,000 Malicious | Untouched holdout reserved for final blind production audit. |
+| **Training** | 2023-09-24 through 2024-06-23 (40 weeks) | 400,000 | 200,000 Benign / 200,000 Malicious | Feature transformation fitting and model parameter training. |
+| **Validation** | 2024-06-30 through 2024-09-15 (12 weeks) | 120,000 | 60,000 Benign / 60,000 Malicious | Model comparison, hyperparameter selection, and threshold tuning. |
+| **Test** | 2024-09-22 through 2024-10-27 (6 weeks) | 59,995 | 29,995 Benign / 30,000 Malicious | One-time post-selection evaluation on unseen newer binaries. |
+| **Reserved Production** | 2024-11-03 through 2024-12-08 (6 weeks) | 59,998 | 29,998 Benign / 30,000 Malicious | Untouched holdout; not evaluated or claimed as completed production validation. |
 
 ### 3.3 Data Provenance Caveats & Reconstructed Data Integrity
-1. **Absence of Local Raw JSONL:** Systematic inspection of local and parent directories confirmed that raw JSONL files were not stored on the local workstation.
-2. **Reconstruction Methodology:** The available processed splits (`data/processed/ember2024_reconstructed_v1`) were reconstructed from previously standardized CSV files by reversing older standardization transformations using stored summary statistics and fitting new replacement moments exclusively on the training split.
+1. **Absence of Local Raw JSONL:** Systematic inspection of local and parent directories confirmed that raw JSONL files were not stored in the local workspace for this finalization.
+2. **Reconstruction Methodology:** The available processed splits (`data/processed/ember2024_reconstructed_v1`) are reconstructed approximations derived by reversing previously stored standardization transformations and fitting replacement scaling moments on the reconstructed training split.
 3. **Missingness Proxy Limitation:** Because original missing-value indicators were lost during initial normalization, a shared zero pattern across `section_count`, `authenticode_num_certs`, and `authenticode_self_signed` served as an imputation proxy. Genuine zero values may thus be misclassified.
-4. **Leakage-Safe Discipline:** Scaling transformations for the reconstructed data were fitted strictly through week start `2024-06-23`. Validation, test, and reserved splits contributed zero observations to feature scaling.
+4. **Preprocessing and Temporal-Split Limitations:** The reconstruction script fits replacement scaling moments on the supplied training split but does not independently enforce a per-row source-week cutoff. The verified training split contains source weeks through June 23, 2024 (2023-09-24 through 2024-06-23). Neither validation, test, nor reserved-production splits were used to fit replacement scaling moments.
+5. **Academic & Production Scope:** Due to these reconstruction and missingness limitations, exact reproducibility of the original preprocessing pipeline cannot be claimed. Model metrics reflect exploratory results from the respective experiments and demonstrate the MLOps workflow rather than an exact raw-data regeneration or a production-certified deployment.
 
 ---
 
@@ -164,7 +167,7 @@ The model consumes 13 numerical PE features recorded in `feature_schema_reconstr
 ### 5.2 Transformation Pipeline
 1. Count-like distributions with heavy positive skew are normalized via $\log(1 + x)$.
 2. Continuous features are standardized: $z = (x - \mu_{\text{train}}) / \sigma_{\text{train}}$.
-3. Scaling statistics ($\mu, \sigma$) are fitted **exclusively on the training partition** (cutoff: 2024-06-23).
+3. Replacement scaling statistics ($\mu, \sigma$) are fitted on the reconstructed training split (covering source weeks 2023-09-24 through 2024-06-23) without an independent per-row cutoff filter. Neither validation, test, nor reserved-production splits were used to fit replacement scaling moments.
 4. Missing standardized values are imputed with 0.0 (the fitted training mean).
 
 ### 5.3 Target Feature Store Architecture
@@ -201,7 +204,7 @@ The optimal operating threshold identified on the validation set was **$\tau = 0
 - **Validation F1-Score:** $0.9231$
 
 ### 6.3 Frozen Test Set Evaluation
-The winning Random Forest model and frozen validation threshold ($	au = 0.790775$) were evaluated in a single, blind evaluation on the 59,995-record temporal test partition (covering subsequent collection weeks). No test information was used to modify parameters or threshold.
+The winning Random Forest model and frozen validation threshold ($\tau = 0.790775$) were evaluated in a single, blind evaluation on the 59,995-record temporal test partition (covering subsequent collection weeks). No test information was used to modify parameters or threshold.
 
 | Evaluation Metric | Test Partition Result | Operational Interpretation |
 |---|---|---|
@@ -218,6 +221,25 @@ The winning Random Forest model and frozen validation threshold ($	au = 0.790775
 
 > **Evaluation Disclosure & Data Caveat:**
 > The 76.51% test recall demonstrates strong static capture of novel malware while holding false alerts under 1%. However, the 7,046 false negatives highlight the inherent limitations of static-only PE metadata against advanced evasion (e.g., packed or polymorphic binaries). Furthermore, these metrics reflect the preprocessed reconstructed dataset approximation (`ember2024_reconstructed_v1`) and serve as a demonstration of the MLOps evaluation methodology rather than an unassailable production guarantee.
+
+### 6.4 Managed SageMaker Baseline Evaluation (Separate Experiment)
+In addition to the local candidate comparison, an actual baseline Logistic Regression training job was executed on Amazon SageMaker (`ml.m5.xlarge`, Python 3.12, AWS-managed scikit-learn container) using the preprocessed handoff under an explicit exploratory legacy-preprocessing configuration.
+
+| Evaluation Metric | SageMaker Baseline Result | Operational Context |
+|---|---|---|
+| **Operating Threshold** | **0.50** | Default binary classification boundary |
+| **Validation ROC-AUC** | **0.9450** (0.9449563) | Global ranking capability of baseline linear model |
+| **Validation PR-AUC** | **0.9442** (0.9442056) | Precision-recall tradeoff on validation split |
+| **Validation Recall** | **89.02%** (0.89015) | Interception rate on validation malware samples |
+| **Validation Precision** | **87.06%** (0.8705907) | Positive predictive value at default threshold |
+| **Validation F1-Score** | **88.03%** (0.8802617) | Harmonic mean of precision and recall |
+| **Validation False-Positive Rate** | **13.23%** (0.1323167) | Baseline FPR prior to post-baseline threshold tuning |
+| **Validation Accuracy** | **87.89%** (0.8789167) | Overall validation classification accuracy |
+| **Validation Specificity** | **86.77%** (0.8676833) | Correct rejection rate of benign validation binaries |
+| **Validation Balanced Accuracy**| **87.89%** (0.8789167) | Macro-averaged recall across both binary classes |
+
+> **Experimental Separation Note:**
+> The SageMaker baseline Logistic Regression evaluation and the local notebook Random Forest comparison are separate experiments. Their distinct model types, operating thresholds (0.50 vs. 0.790775), evaluation environments, and metrics are preserved independently and must not be conflated or substituted.
 
 ---
 
@@ -269,7 +291,7 @@ The operational release pipeline enforces strict multi-stage quality gates befor
 ```mermaid
 flowchart LR
     G1["1. PR & Static Checks<br/>(Flake8, AST Notebook Check)"] --> G2["2. Automated Unit Tests<br/>(25 Unit Tests Passed)"]
-    G2 --> G3["3. Leakage & Split Audit<br/>(Verify Zero Chronological Overlap)"]
+    G2 --> G3["3. Chronological Split Audit<br/>(Verify Partition Isolation)"]
     G3 --> G4["4. Model Training & Evaluation<br/>(LR, RF, XGBoost Comparison)"]
     G4 --> G5["5. Policy & Threshold Gate<br/>(Enforce Validation FPR <= 1%)"]
     G5 --> G6["6. Model Registry<br/>(Signed Artifact in Approved State)"]
@@ -280,7 +302,7 @@ flowchart LR
 ### Quality Gate Criteria
 - **Gate 1 (Source Integrity):** All code reviewed; secret scanners confirm zero AWS credentials or tokens in repository.
 - **Gate 2 (Unit & Contract Tests):** 25/25 automated unit tests pass in under 30 seconds.
-- **Gate 3 (Leakage Audit):** Hash check verifies that training scaling parameters used zero records from validation or test periods.
+- **Gate 3 (Chronological Split Audit):** Hash check verifies partition isolation across time windows and confirms that training scaling moments were fitted on the training split.
 - **Gate 4 (Performance Gating):** Candidate must achieve validation PR-AUC $\ge 0.95$ and maintain validation $\text{FPR} \le 1.0\%$.
 - **Gate 5 (Governance Sign-Off):** Model card, cryptographic checksums, and training metadata approved by lead ML engineer.
 
@@ -306,11 +328,11 @@ flowchart LR
 
 | Identified Risk | Severity | Root Cause / Impact | Operational Mitigation |
 |---|---|---|---|
-| **Reconstructed Data Approximation** | Medium | Original raw JSONL files were unavailable locally; scaling was reconstructed from processed CSVs. | Explicitly disclose reconstruction limitations; rerun exact feature preparation once raw data is staged. |
-| **Proxy Imputation Error** | Low | Zero-pattern proxy in three features may confuse genuine zeros with missingness. | Validate against raw PE headers; preserve explicit missingness bitmasks in future feature extractions. |
+| **Reconstructed Data Approximation** | Medium | Original raw JSONL files were unavailable in the local workspace; features were reconstructed by reversing standardization and fitting replacement scaling moments on the training split. | Explicitly disclose reconstruction limitations; do not claim exact raw-data regeneration or certified production performance. |
+| **Proxy Imputation Error** | Low | Original missing-value indicators were lost; a zero-pattern proxy across three features was used and may misclassify legitimate zeros. | Validate against raw PE headers when raw JSONL is staged; preserve explicit missingness masks in future pipelines. |
 | **High False Negatives (23.49%)** | High | Conservative 1% FPR threshold lets evasive or packed malware pass undetected. | Implement layered defense: combine static triage with dynamic sandbox detonation for ambiguous files. |
 | **Compiler & Packer Concept Drift**| Medium | Attackers alter compilers, packers, and crypters over time, causing static feature decay. | Schedule recurring bi-weekly retraining jobs; monitor rolling weekly recall via CloudWatch. |
-| **Cloud Execution Disabled** | Low | Cloud execution remained disabled to prevent unexpected AWS charges. | Guarded notebook workflows (`02_sagemaker_training_evaluation.ipynb`) are pre-validated to run seamlessly when authorized. |
+| **Cloud Execution Safeguards** | Low | Production notebooks guard cloud switches (`RUN_AWS = False`) to prevent accidental costs. | Standalone launch scripts (`launch_sagemaker_training.py` / `launch_training_cloudshell.sh`) provide explicit, validated cloud entry points. |
 
 ---
 
@@ -324,6 +346,7 @@ flowchart LR
 | **Candidate Model Comparison** | **Yes** | — | `reports/exploratory_local/validation_model_comparison.csv` (RF, XGBoost, LR) |
 | **Threshold Tuning (1% FPR)** | **Yes** | — | `reports/exploratory_local/validation_threshold_sweep.csv` ($\tau = 0.790775$) |
 | **Held-Out Test Set Evaluation**| **Yes** | — | `reports/exploratory_local/exploratory_test_metrics.json` (Precision: 98.71%, Recall: 76.51%) |
+| **Managed SageMaker Baseline** | **Yes** | — | Completed `ml.m5.xlarge` baseline job with legacy preprocessing; S3 model artifacts & reports (ROC-AUC: 0.9450, PR-AUC: 0.9442) |
 | **Guarded SageMaker Template** | **Yes** | — | `notebooks/02_sagemaker_training_evaluation.ipynb` (Guarded cloud safety switches) |
 | **Inference Contract** | **Yes** | — | `sagemaker_src/inference.py` (Request/response JSON contract) |
 | **Automated Unit Tests** | **Yes** | — | `tests/` (25/25 tests passing in 10.69 seconds) |

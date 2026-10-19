@@ -39,6 +39,9 @@ Artifacts produced by the earlier implementation fitted scaling over all 52 supp
 
 The model trainer rejects schemas without the model-training-only fit declaration or the expected cutoff by default. An explicit legacy compatibility override is for diagnosing an old handoff and must be disclosed in resulting reports; it cannot establish a leakage-free final experiment. Do not edit an old schema to add the declaration without regenerating its values. See [the SageMaker runbook](sagemaker_runbook.md) for teammate setup and artifact checks.
 
+### Local Workspace Reconstruction Caveat
+In the local workspace for this project finalization, original raw JSONL files were not available. Existing processed CSV files (`data/processed/ember2024_reconstructed_v1/`) were reconstructed by reversing previously stored standardization transformations and fitting replacement scaling moments on the reconstructed training split. The reconstruction script fits replacement scaling moments on the supplied training split (whose source weeks run through 2024-06-23) but does not independently enforce a per-row source-week cutoff. Neither validation, test, nor reserved-production partitions were used to fit replacement scaling moments. Original missing-value indicators were lost during initial preprocessing and were estimated using a three-feature zero-pattern proxy (`section_count`, `authenticode_num_certs`, `authenticode_self_signed`). Exact reproducibility of the original raw-data preprocessing pipeline cannot be claimed, and model outputs must be presented as exploratory results.
+
 ## Outputs
 
 All outputs are local-only under the configured `data/processed/...` directory and are ignored by Git:

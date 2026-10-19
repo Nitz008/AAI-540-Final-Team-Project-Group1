@@ -75,6 +75,8 @@ python scripts/create_temporal_splits.py
 
 Publish the resulting schema, CSVs, processing report, manifest, and metadata together under a fresh S3 prefix. Do not edit an old schema to claim a new cutoff or mix files from different versions. The explicit legacy compatibility override is exploratory only and must remain disclosed in every resulting report. See [feature preparation](feature_preparation.md) and [temporal strategy](temporal_split_strategy.md).
 
+Where raw JSONL files are unavailable locally, existing processed splits (`data/processed/ember2024_reconstructed_v1/`) serve as an exploratory approximation reconstructed by reversing standardization and fitting replacement scaling moments on the training partition (source weeks through 2024-06-23) without an independent per-row cutoff filter. Original missing-value indicators were lost and estimated via a three-feature zero proxy. Exact reproducibility of the original raw pipeline cannot be claimed.
+
 ## 4. Run the baseline first
 
 The notebook defaults to the following controls:

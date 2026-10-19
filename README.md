@@ -23,7 +23,7 @@ This repository contains the complete MLOps engineering codebase, exploratory an
 
 ## Notebooks and Execution Workflows
 
-The repository organizes analysis and modeling into explicit, reproducible notebooks:
+The repository organizes analysis and modeling into explicit, reproducible notebooks and cloud training artifacts:
 
 ### 1. `notebooks/01_ember2024_eda.ipynb`
 - **Purpose:** Exploratory Data Analysis of the EMBER2024 Win64 dataset.
@@ -33,37 +33,54 @@ The repository organizes analysis and modeling into explicit, reproducible noteb
 
 ### 2. `notebooks/02_sagemaker_training_evaluation_local_exploratory_label_fix.ipynb`
 - **Purpose:** Local, reproducible candidate model comparison and temporal test evaluation.
-- **Methodology:**
-  - Evaluates Logistic Regression, Random Forest, and XGBoost on a stratified 100,000-record training sample.
+- **Methodology & Exploratory Random Forest Metrics:**
+  - Evaluates Logistic Regression, Random Forest, and XGBoost on a stratified 100,000-record training sample from the reconstructed approximation.
   - Compares candidates on the full 120,000-record validation partition (Random Forest achieved top validation PR-AUC: 0.9912).
-  - Sweeps validation probabilities to select an operating threshold ($	au = 0.790775$) enforcing a strict **False Positive Rate budget $\le 1.0\%$**.
+  - Sweeps validation probabilities to select an operating threshold ($\tau = 0.790775$) enforcing a strict **False Positive Rate budget $\le 1.0\%$**.
   - Performs a single, frozen evaluation on the held-out 59,995-record temporal test partition:
-    - **Precision:** 98.71% (299 false positives out of 29,995 benign files)
-    - **Recall:** 76.51% (22,954 true positives out of 30,000 malware files)
-    - **F1-Score:** 86.21%
-    - **ROC-AUC:** 0.9875 | **PR-AUC:** 0.9879
+    - **Validation PR-AUC:** 0.9912
+    - **Selected Threshold:** 0.790775 (targeting validation FPR $\le$ 1%)
+    - **Test Precision:** 98.71% (299 false positives out of 29,995 benign files)
+    - **Test Recall:** 76.51% (22,954 true positives out of 30,000 malware files)
+    - **Test F1-Score:** 86.21%
+    - **Test ROC-AUC:** 0.9875 | **Test PR-AUC:** 0.9879
 - **Status:** Fully executable locally; verified and consistent with saved reports in `reports/exploratory_local/`.
 
-### 3. `notebooks/02_sagemaker_training_evaluation.ipynb`
-- **Purpose:** Guarded Amazon SageMaker production training and evaluation template.
-- **Safety Policy:** All cloud execution switches remain disabled by default (`RUN_AWS = False`, `DOWNLOAD_HANDOFF = False`, `RUN_BASELINE = False`, `RUN_COMPARISON = False`, `RUN_FINAL_TEST = False`). Zero AWS charges are incurred.
-- **Prerequisite Handling:** Explicitly detects if the authoritative regenerated handoff (`data/processed/ember2024_win64_static_v1/feature_schema.json`) is present. When absent due to raw data limits, it explicitly notifies the user and points to the local exploratory workflow.
-- **Test Compliance:** Validated against automated unit tests `tests/test_notebook_defaults.py` and `tests/test_notebook_modeling.py`.
+### 3. `notebooks/02_sagemaker_training_evaluation.ipynb` & SageMaker Baseline Training
+- **Purpose:** Guarded Amazon SageMaker production training and evaluation workflow.
+- **Safety Policy:** All cloud execution switches remain disabled by default (`RUN_AWS = False`, `DOWNLOAD_HANDOFF = False`, `RUN_BASELINE = False`, `RUN_COMPARISON = False`, `RUN_FINAL_TEST = False`). Zero AWS charges are incurred during default notebook execution.
+- **Separate SageMaker Baseline Logistic-Regression Evaluation:**
+  - An exploratory baseline Logistic Regression training job was run on SageMaker using the preprocessed handoff and legacy preprocessing compatibility.
+  - Cloud artifacts are retained and represent a separate exploratory experiment:
+    - **Threshold:** 0.5
+    - **ROC-AUC:** 0.9449563
+    - **PR-AUC:** 0.9442056
+    - **Recall:** 0.89015
+    - **Precision:** 0.8705907
+    - **F1-Score:** 0.8802617
+    - **False-Positive Rate:** 0.1323167
+    - **Accuracy:** 0.8789167
+    - **Specificity:** 0.8676833
+    - **Balanced Accuracy:** 0.8789167
+- **Note on Metric Separation:** The local notebook Random Forest evaluation and the SageMaker baseline Logistic Regression job are distinct experiments. Their attributions, model types, operating thresholds, and experimental contexts are preserved separately and not interchanged.
 
 ---
 
 ## Dataset Scope, Provenance & Integrity Disclosures
 
-- **Target Binary Task:** Supervised classification where `0` = Benign and `1` = Malicious Windows 64-bit Portable Executables (PE).
-- **Temporal Partitions:**
-  - **Train:** 400,000 records (200k benign / 200k malicious), 2023-09-24 to 2024-06-29 (40 weeks)
-  - **Validation:** 120,000 records (60k benign / 60k malicious), 2024-06-30 to 2024-09-21 (12 weeks)
-  - **Test:** 59,995 records (29,995 benign / 30,000 malicious), 2024-09-22 to 2024-11-02 (6 weeks)
-  - **Reserved Production:** 59,998 records, 2024-11-03 to 2024-12-14 (6 weeks, held untouched)
-- **Data Provenance & Reconstruction Caveat:**
-  - Original raw EMBER2024 JSONL files (~33.5 GB) were not staged locally on this machine.
-  - Preprocessed CSV files in `data/processed/ember2024_reconstructed_v1/` were reconstructed by reversing prior standardization and refitting scaling moments **exclusively on the training partition** through week start `2024-06-23`.
-  - Missingness was estimated using a three-feature zero proxy. Results demonstrate the end-to-end MLOps pipeline and temporal methodology, but are explicitly disclosed as an exploratory approximation rather than an official raw-data benchmark.
+- **Target Binary Task:** Supervised classification where `0` = Benign and `1` = Malicious Windows 64-bit Portable Executables (PE) using EMBER2024-derived static features.
+- **Verified Temporal Partitions:**
+  - **Training:** 400,000 rows (200,000 benign / 200,000 malicious); source weeks 2023-09-24 through 2024-06-23 (40 weeks).
+  - **Validation:** 120,000 rows (60,000 benign / 60,000 malicious); source weeks 2024-06-30 through 2024-09-15 (12 weeks).
+  - **Test:** 59,995 rows (29,995 benign / 30,000 malicious); source weeks 2024-09-22 through 2024-10-27 (6 weeks).
+  - **Reserved Production:** 59,998 rows (29,998 benign / 30,000 malicious); source weeks 2024-11-03 through 2024-12-08 (6 weeks, held untouched).
+- **Data Provenance & Reconstruction Caveats:**
+  - Original raw EMBER2024 JSONL files (~33.5 GB) were not available in the local workspace for this finalization.
+  - The processed CSV files in `data/processed/ember2024_reconstructed_v1/` are reconstructed approximations derived by reversing previously stored standardization transformations and fitting replacement scaling moments on the reconstructed training split.
+  - The reconstruction script fits replacement scaling moments on the supplied training split but does not independently enforce a per-row source-week cutoff. The verified training split's latest source week is 2024-06-23. Neither validation, test, nor reserved-production splits were used to fit the replacement scaling moments.
+  - Original missing-value indicators were lost during earlier preprocessing. A three-feature zero-pattern proxy (`section_count`, `authenticode_num_certs`, `authenticode_self_signed`) was used to estimate missingness and may misclassify legitimate zero values.
+  - Because of these reconstruction and missingness limitations, exact reproducibility of the original preprocessing pipeline cannot be claimed. Model metrics reflect exploratory results from the respective experiments and demonstrate the MLOps workflow rather than an exact raw-data regeneration or a production-certified deployment.
+  - The reserved-production split was preserved untouched as a holdout and is not presented as a completed production validation exercise.
 
 ---
 

@@ -49,9 +49,9 @@ This document provides the complete, presentation-ready script, visual storyboar
 >
 > *"To ensure academic and engineering rigor, our pipeline consumes the Windows 64-bit partition of the EMBER2024 benchmark. We established strict data integrity safeguards:*
 > - *First, we implemented SHA-256 deduplication to prevent repeated sample leakage.*
-> - *Second, we enforced strict chronological splitting across 64 collection weeks: 40 weeks for Training (400,000 files), 12 weeks for Validation (120,000 files), 6 weeks for newer Test evaluation (59,995 files), and 6 weeks held untouched in Reserved Production.*
+> - *Second, we enforced strict chronological splitting across 64 collection weeks: Training across 40 source weeks from 2023-09-24 through 2024-06-23 (400,000 files), Validation across 12 source weeks from 2024-06-30 through 2024-09-15 (120,000 files), Test across 6 source weeks from 2024-09-22 through 2024-10-27 (59,995 files), and 6 source weeks from 2024-11-03 through 2024-12-08 held untouched in Reserved Production.*
 >
-> *"As shown here in our validated EDA notebook, our data distributions show balanced 50/50 class representations across all temporal windows. Notice that we explicitly disabled raw JSONL feature regeneration by default, as the raw 100-gigabyte dataset was not staged locally. Instead, we developed a reproducible reconstruction pipeline with train-only scaling moments, ensuring zero temporal leakage into validation or test partitions.*
+> *"As shown here in our validated EDA notebook, our data distributions show balanced 50/50 class representations across all temporal windows. Notice that raw JSONL feature files were not available in the local workspace. Instead, our data pipeline used an exploratory reconstruction approximation where replacement scaling moments were fitted on the training split, keeping partitions isolated while transparently disclosing the limitations of the missingness proxy.*
 >
 > *"Now, I'll hand over to Marco to walk through our feature pipeline, candidate modeling, and test performance."*
 
@@ -67,11 +67,11 @@ This document provides the complete, presentation-ready script, visual storyboar
 >
 > *(Show `feature_schema_reconstructed.json` in VS Code / Jupyter)*
 >
-> *"Our model operates on a compact contract of 13 numeric PE features. These include file size, Byte Shannon entropy, string counts, string entropy, PE section counts, imported DLL counts, export counts, Visual Studio rich header tools, parser warnings, and digital certificate indicators. Highly skewed distributions are log-transformed, and all continuous features are standardized using parameters fitted **exclusively on the training partition** through week cutoff June 23, 2024.*
+> *"Our model operates on a compact contract of 13 numeric PE features. These include file size, Byte Shannon entropy, string counts, string entropy, PE section counts, imported DLL counts, export counts, Visual Studio rich header tools, parser warnings, and digital certificate indicators. Highly skewed distributions are log-transformed, and continuous features are standardized using replacement moments fitted on the reconstructed training partition, whose source weeks run through June 23, 2024. The reconstruction script does not independently enforce a per-row cutoff filter, but neither validation nor test rows were used to fit the scaler.*
 >
 > *(Switch screencast to `02_sagemaker_training_evaluation_local_exploratory_label_fix.ipynb` Cell 11 & Table)*
 >
-> *"In our model comparison, we evaluated three distinct algorithms on a stratified 100,000-record training sample:*
+> *"In our local candidate comparison, we evaluated three distinct algorithms on a stratified 100,000-record training sample:*
 > 1. *Logistic Regression as an interpretable linear baseline (Validation PR-AUC: 0.9494)*
 > 2. *XGBoost as an advanced gradient boosted tree (Validation PR-AUC: 0.9891)*
 > 3. *Random Forest as a bagged ensemble of 160 trees (Validation PR-AUC: 0.9912)*
@@ -88,6 +88,9 @@ This document provides the complete, presentation-ready script, visual storyboar
 > - *ROC-AUC reached **0.9875** and PR-AUC reached **0.9879**.*
 > - *Precision was outstanding at **98.71%**, producing only 299 false positives out of nearly 30,000 benign files.*
 > - *Recall was **76.51%**, successfully intercepting 22,954 malware binaries.*
+> - *F1-Score was **86.21%**.*
+>
+> *"In addition, as documented in our system design, a separate managed baseline Logistic Regression job was executed on Amazon SageMaker with explicit legacy-preprocessing disclosure, achieving a validation ROC-AUC of 0.9450, PR-AUC of 0.9442, recall of 89.02%, and FPR of 13.23% at threshold 0.50. These are two distinct experiments and their metrics are preserved separately.*
 >
 > *"We disclose that these metrics were computed against the reconstructed dataset approximation, which proves our MLOps workflow while maintaining honesty about data provenance. Now, Gaurav will present our operational MLOps infrastructure, monitoring, and CI/CD."*
 
